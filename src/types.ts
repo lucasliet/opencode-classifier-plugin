@@ -54,13 +54,6 @@ export interface DomainRoutingOptions {
   byDomain?: Record<string, string>
 }
 
-export interface SkillRoutingOptions {
-  enabled?: boolean
-  minimumProbability?: number
-  maxCandidates?: number
-  maxSelected?: number
-}
-
 export interface ContextOptions {
   enabled?: boolean
   minChars?: number
@@ -85,7 +78,6 @@ export interface PluginOptions {
   router?: RouterOptions
   autoMode?: AutoModeOptions
   agents?: DomainRoutingOptions
-  skills?: SkillRoutingOptions
   context?: ContextOptions
   privacy?: PrivacyOptions
 }
@@ -116,12 +108,6 @@ export interface ResolvedOptions {
     enabled: boolean
     minimumProbability: number
     byDomain: Record<string, string>
-  }
-  skills: {
-    enabled: boolean
-    minimumProbability: number
-    maxCandidates: number
-    maxSelected: number
   }
   context: Required<ContextOptions>
   privacy: Required<PrivacyOptions>
@@ -180,23 +166,11 @@ export interface PermissionSignals {
   privilegeEscalation: number
 }
 
-export interface SkillCandidate {
-  name: string
-  description: string
-}
-
-export interface SkillSelection {
-  name: string
-  probability: number
-}
-
 export interface SessionRuntimeState {
   task?: string
   routerActive: boolean
   lastRoutedModel?: ModelRef
   turnModel?: ModelRef
   routedTier?: ModelTier
-  routedSkills: string[]
-  skillSelectionDone: boolean
   directives: string[]
 }

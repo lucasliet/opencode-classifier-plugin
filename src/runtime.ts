@@ -3,8 +3,6 @@ import type { SessionRuntimeState } from "./types.ts"
 export function createSessionState(): SessionRuntimeState {
   return {
     routerActive: false,
-    routedSkills: [],
-    skillSelectionDone: false,
     directives: [],
   }
 }

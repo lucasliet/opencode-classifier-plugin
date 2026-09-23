@@ -58,7 +58,6 @@ export function resolveOptions(raw: unknown): ResolvedOptions {
   const autoModeCommandRules = record(autoMode.commandRules)
   const autoModeThresholds = record(autoMode.thresholds)
   const agents = record(source.agents)
-  const skills = record(source.skills)
   const context = record(source.context)
   const privacy = record(source.privacy)
 
@@ -143,13 +142,6 @@ export function resolveOptions(raw: unknown): ResolvedOptions {
       minimumProbability: num(agents.minimumProbability, 0.85, 0, 1),
       byDomain: stringMap(agents.byDomain),
     },
-    skills: {
-      enabled: bool(skills.enabled, false),
-      minimumProbability: num(skills.minimumProbability, 0.70, 0, 1),
-      maxCandidates: integer(skills.maxCandidates, 32, 1, 128),
-      maxSelected: integer(skills.maxSelected, 1, 1, 8),
-    },
-
     context: {
       enabled: bool(context.enabled, true),
       minChars: integer(context.minChars, 12_000, 1_000, 1_000_000),

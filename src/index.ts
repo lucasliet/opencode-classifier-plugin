@@ -1,4 +1,5 @@
 import type { Config, Plugin } from "@opencode-ai/plugin"
+import { appendFileSync } from "node:fs"
 import {
   VIRTUAL_MODEL_ID,
   VIRTUAL_MODEL_NAME,
@@ -14,15 +15,9 @@ import {
   chooseTier,
   classifyPermission,
   classifyRoute,
-  classifySkills,
 } from "./classifier.ts"
 import { decidePermission } from "./permission.ts"
 import { filterLargeToolContext } from "./context.ts"
-import {
-  extractNativeSkillCatalog,
-  sanitizeSkillToolDefinition,
-  stripNativeSkillCatalog,
-} from "./skills.ts"
 import {
   createSessionState,
   eventSessionID,
@@ -35,14 +30,29 @@ import type {
   SessionRuntimeState,
 } from "./types.ts"
 
-export const OpenCodeClassifierPlugin: Plugin = async ({ serverUrl }, rawOptions) => {
+export const OpenCodeClassifierPlugin: Plugin = async (
+  { client, directory, serverUrl },
+  rawOptions,
+) => {
   const options = resolveOptions(rawOptions)
   const jev = new JevClient(options)
   const sessions = new Map<string, SessionRuntimeState>()
   const permissionRequests = new Set<string>()
   const contextFilterCache = new Map<string, string | undefined>()
 
+  // Trace goes to a file because stderr is interleaved into the TUI and
+  // cannot be read comfortably mid-session. File logging is always on;
+  // console output stays gated behind debug.
   const trace = (message: string, details: Record<string, unknown>) => {
+    try {
+      appendFileSync(
+        process.env.OPENCODE_CLASSIFIER_LOG ??
+          "/tmp/opencode-classifier-plugin.log",
+        `${new Date().toISOString()} ${message} ${safeJson(details, 1_000)}\n`,
+      )
+    } catch {
+      // Logging must never break the plugin.
+    }
     if (!options.debug) return
     console.error(
       `[opencode-classifier-plugin] ${message} ${safeJson(details, 1_000)}`,
@@ -183,56 +193,16 @@ export const OpenCodeClassifierPlugin: Plugin = async ({ serverUrl }, rawOptions
     },
 
     "experimental.chat.system.transform": async (input, output) => {
-      const nativeSkills = options.skills.enabled
-        ? extractNativeSkillCatalog(output.system)
-        : []
-      if (options.skills.enabled) stripNativeSkillCatalog(output.system)
-
       if (!input.sessionID) return
       const state = sessions.get(input.sessionID)
       if (!state) return
       if (state.turnModel && !classicModelMatches(input.model, state.turnModel)) return
-
-      if (
-        options.skills.enabled &&
-        !state.skillSelectionDone
-      ) {
-        state.skillSelectionDone = true
-        if (state.task && nativeSkills.length > 0) {
-          try {
-            const selected = await classifySkills(
-              jev,
-              options,
-              state.task,
-              nativeSkills,
-            )
-            state.routedSkills = selected.map((item) => item.name)
-          } catch (error) {
-            pushDirective(
-              state,
-              `Skill selection was unavailable: ${errorMessage(error)}`,
-            )
-          }
-        }
-      }
-
-      if (state.routedSkills.length > 0) {
-        output.system.push(
-          `Jev selected the following skill(s) for this task: ${state.routedSkills.join(", ")}. Before substantive work, call the built-in skill tool with exactly the selected name(s). Do not enumerate, discover, or guess other skills.`,
-        )
-      }
 
       if (state.directives.length > 0) {
         output.system.push(
           `Classifier guidance:\n- ${state.directives.join("\n- ")}`,
         )
         state.directives = []
-      }
-    },
-
-    "tool.definition": async (input, output) => {
-      if (options.skills.enabled && input.toolID === "skill") {
-        sanitizeSkillToolDefinition(output)
       }
     },
 
@@ -248,12 +218,23 @@ export const OpenCodeClassifierPlugin: Plugin = async ({ serverUrl }, rawOptions
           resources: stringList(input.pattern),
           ...(metadata ? { metadata } : {}),
         }
+        trace("permission.ask received", {
+          action: request.action,
+          status: output.status,
+        })
         const signals = await classifyPermission(jev, options, request)
 
         const decision = decidePermission(output.status, signals, options, request)
+        trace("permission.ask evaluated", {
+          action: request.action,
+          effect: decision.effect,
+        })
         if (decision.effect === "allow") output.status = "allow"
         if (decision.effect === "deny") output.status = "deny"
-      } catch {
+      } catch (error) {
+        trace("permission.ask classification failed", {
+          error: errorMessage(error),
+        })
         if (options.autoMode.onError === "ask") output.status = "ask"
       }
     },
@@ -275,6 +256,7 @@ export const OpenCodeClassifierPlugin: Plugin = async ({ serverUrl }, rawOptions
           requestID,
           sessionID,
           action: v2 ? properties.action : properties.permission,
+          host: describeReplyHost({ client, directory, serverUrl }),
         })
 
         try {
@@ -296,14 +278,27 @@ export const OpenCodeClassifierPlugin: Plugin = async ({ serverUrl }, rawOptions
             effect: decision.effect,
           })
           if (decision.effect === "allow") {
-            await replyToPermission(serverUrl, requestID, "once")
+            await replyToPermission(
+              { client, directory, serverUrl },
+              sessionID,
+              requestID,
+              "once",
+            )
             trace("permission response sent", { requestID, reply: "once" })
           } else if (decision.effect === "deny") {
-            await replyToPermission(serverUrl, requestID, "reject")
+            await replyToPermission(
+              { client, directory, serverUrl },
+              sessionID,
+              requestID,
+              "reject",
+            )
             trace("permission response sent", { requestID, reply: "reject" })
           }
-        } catch {
-          trace("permission classification failed", { requestID })
+        } catch (error) {
+          trace("permission classification failed", {
+            requestID,
+            error: errorMessage(error),
+          })
           if (options.autoMode.onError === "ask") return
         }
         return
@@ -375,8 +370,6 @@ export function installVirtualProvider(config: Config): void {
 }
 
 function resetTurnState(state: SessionRuntimeState): void {
-  state.routedSkills = []
-  state.skillSelectionDone = false
   state.directives = []
   delete state.routedTier
   delete state.turnModel
@@ -459,22 +452,144 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+interface PermissionReplyTarget {
+  client: unknown
+  directory: string | undefined
+  serverUrl: URL
+}
+
+interface HostPermissionResponder {
+  (input: {
+    requestID: string
+    reply: "once" | "reject"
+    directory: string | undefined
+  }): Promise<unknown>
+}
+
+interface HostSessionPermissionPoster {
+  (input: {
+    path: { id: string; permissionID: string }
+    body: { response: "once" | "always" | "reject" }
+    query?: { directory?: string }
+  }): Promise<unknown>
+}
+
+function hostPermissionResponder(client: unknown): HostPermissionResponder | undefined {
+  if (!client || typeof client !== "object") return undefined
+  const permission = (client as Record<string, unknown>).permission
+  if (!permission || typeof permission !== "object") return undefined
+  const reply = (permission as Record<string, unknown>).reply
+  if (typeof reply !== "function") return undefined
+  return (input) =>
+    (reply as (...args: unknown[]) => Promise<unknown>).call(permission, input)
+}
+
+function hostSessionPermissionPoster(
+  client: unknown,
+): HostSessionPermissionPoster | undefined {
+  if (!client || typeof client !== "object") return undefined
+  const post = (client as Record<string, unknown>)
+    .postSessionIdPermissionsPermissionId
+  if (typeof post !== "function") return undefined
+  return (input) =>
+    (post as (...args: unknown[]) => Promise<unknown>).call(client, input)
+}
+
+function throwIfSdkError(result: unknown): void {
+  if (!result || typeof result !== "object") return
+  const error = (result as Record<string, unknown>).error
+  if (error !== undefined && error !== null) {
+    throw new Error(safeJson(error, 500))
+  }
+}
+
+function describeReplyHost(target: PermissionReplyTarget): Record<string, unknown> {
+  const client = target.client
+  const keys =
+    client && typeof client === "object"
+      ? Object.keys(client as Record<string, unknown>).slice(0, 40)
+      : []
+  return {
+    serverUrl: String(target.serverUrl ?? "undefined"),
+    directory: target.directory ?? "undefined",
+    clientKeys: keys,
+    hasPermissionReply: Boolean(hostPermissionResponder(client)),
+    hasSessionPermissionPost: Boolean(hostSessionPermissionPoster(client)),
+  }
+}
+
 async function replyToPermission(
-  serverUrl: URL,
+  target: PermissionReplyTarget,
+  sessionID: string,
   requestID: string,
   reply: "once" | "reject",
 ): Promise<void> {
-  const response = await fetch(
-    new URL(`/permission/${encodeURIComponent(requestID)}/reply`, serverUrl),
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ reply }),
-    },
-  )
-  if (!response.ok) {
-    throw new Error(
-      `opencode-classifier-plugin: OpenCode permission reply failed with HTTP ${response.status}.`,
-    )
+  // Prefer the host-provided SDK client: it carries the right base URL and
+  // credentials. This mirrors how the OpenCode TUI answers permissions
+  // itself in auto mode.
+  const failures: string[] = []
+  const responder = hostPermissionResponder(target.client)
+  if (responder) {
+    try {
+      await responder({
+        requestID,
+        reply,
+        directory: target.directory,
+      })
+      return
+    } catch (error) {
+      failures.push(`client: ${errorMessage(error)}`)
+    }
+  } else {
+    failures.push("client: unavailable")
   }
+
+  // Classic server-plugin API from @opencode-ai/sdk: the host client is
+  // already pointed at the right server with credentials.
+  const poster = hostSessionPermissionPoster(target.client)
+  if (poster) {
+    try {
+      const result = await poster({
+        path: { id: sessionID, permissionID: requestID },
+        body: { response: reply },
+        ...(target.directory ? { query: { directory: target.directory } } : {}),
+      })
+      throwIfSdkError(result)
+      return
+    } catch (error) {
+      failures.push(`sdk: ${errorMessage(error)}`)
+    }
+  } else {
+    failures.push("sdk: unavailable")
+  }
+
+  // Fallback when the host client is unavailable: raw HTTP. Prefer the v2
+  // session-scoped endpoint since the server resolves the workspace from
+  // the session, while the legacy experimental route depends on optional
+  // directory/workspace query params the permission event does not carry.
+  const paths = [
+    `/api/session/${encodeURIComponent(sessionID)}/permission/${encodeURIComponent(requestID)}/reply`,
+    `/permission/${encodeURIComponent(requestID)}/reply`,
+  ]
+
+  const statuses: number[] = []
+  for (const path of paths) {
+    let response: Response
+    try {
+      response = await fetch(new URL(path, target.serverUrl), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reply }),
+      })
+    } catch (error) {
+      failures.push(`${path}: ${errorMessage(error)}`)
+      continue
+    }
+    if (response.ok) return
+    statuses.push(response.status)
+  }
+
+  throw new Error(
+    `opencode-classifier-plugin: OpenCode permission reply failed (${failures.join("; ")}; HTTP ${statuses.join("/")}).`,
+  )
 }

@@ -98,17 +98,6 @@ function permissionResponse(overrides: Record<string, number> = {}) {
   }
 }
 
-function skillResponse(scores: number[]) {
-  return {
-    answers: Object.fromEntries(
-      scores.map((noul, index) => [
-        `skill_${index}`,
-        { type: "noul", noul },
-      ]),
-    ),
-  }
-}
-
 function pluginInput() {
   const permissionReplies: unknown[] = []
   const client = {
@@ -780,100 +769,6 @@ test("agent routing works with a manually selected real model", async () => {
   )
 })
 
-test("skill routing hides the native catalog and reveals only Jev-selected skills", async () => {
-  const mock = pluginInput()
-
-  await withFetch(
-    (async () =>
-      new Response(JSON.stringify(skillResponse([0.96, 0.12])), {
-        status: 200,
-      })) as typeof fetch,
-    async () => {
-      const hooks = await OpenCodeClassifierPlugin(mock.input, {
-        decision: { apiKey: "test", retries: 0 },
-        router: { enabled: false },
-        agents: { enabled: false },
-        skills: {
-          enabled: true,
-          minimumProbability: 0.7,
-          maxCandidates: 8,
-          maxSelected: 1,
-        },
-      })
-
-      const output = userOutput("opencode-go", "gpt-5.6-luna")
-      await hooks["chat.message"]?.({ sessionID: "ses_1" } as any, output)
-
-      const nativeCatalog = [
-        "Skills provide specialized instructions and workflows for specific tasks.",
-        "Use the skill tool to load a skill when a task matches its description.",
-        "<available_skills>",
-        "  <skill>",
-        "    <name>backend-skill</name>",
-        "    <description>Backend implementation workflow</description>",
-        "    <location>/private/backend/SKILL.md</location>",
-        "  </skill>",
-        "  <skill>",
-        "    <name>frontend-skill</name>",
-        "    <description>Frontend implementation workflow</description>",
-        "    <location>/private/frontend/SKILL.md</location>",
-        "  </skill>",
-        "</available_skills>",
-      ].join("\n")
-
-      const system = { system: [nativeCatalog, "ordinary system instruction"] }
-      await hooks["experimental.chat.system.transform"]?.(
-        {
-          sessionID: "ses_1",
-          model: { providerID: "opencode-go", id: "gpt-5.6-luna" },
-        } as any,
-        system,
-      )
-
-      const rendered = system.system.join("\n")
-      assert.doesNotMatch(rendered, /available_skills/)
-      assert.doesNotMatch(rendered, /Backend implementation workflow/)
-      assert.doesNotMatch(rendered, /Frontend implementation workflow/)
-      assert.doesNotMatch(rendered, /frontend-skill/)
-      assert.match(rendered, /backend-skill/)
-      assert.match(rendered, /exactly the selected name/)
-
-      const definition = {
-        description: "old skill description",
-        parameters: {
-          type: "object",
-          properties: {
-            name: {
-              type: "string",
-              description: "The name of the skill from available_skills",
-            },
-          },
-        },
-        jsonSchema: {
-          type: "object",
-          properties: {
-            name: {
-              type: "string",
-              description: "The name of the skill from available_skills",
-            },
-          },
-        },
-      }
-      await hooks["tool.definition"]?.({ toolID: "skill" }, definition)
-      assert.doesNotMatch(definition.description, /listed in the system prompt/)
-      assert.doesNotMatch(
-        definition.parameters.properties.name.description,
-        /available_skills/,
-      )
-      assert.doesNotMatch(
-        definition.jsonSchema.properties.name.description,
-        /available_skills/,
-      )
-      assert.match(definition.description, /classifier\/system instruction/)
-    },
-  )
-})
-
 test("Auto Mode allows safe permission requests and keeps risky requests as ask", async () => {
   const mock = pluginInput()
 
@@ -977,6 +872,98 @@ test("Auto Mode keeps high-risk permissions available for human approval", async
 
 test("Auto Mode responds to the host permission.asked event", async () => {
   const mock = pluginInput()
+  const requested: string[] = []
+
+  await withFetch(
+    (async (input) => {
+      requested.push(String(input))
+      return new Response(JSON.stringify(permissionResponse()), { status: 200 })
+    }) as typeof fetch,
+    async () => {
+      const hooks = await OpenCodeClassifierPlugin(mock.input, {
+        decision: { apiKey: "test", retries: 0 },
+        router: { enabled: false },
+      })
+
+      await hooks.event?.({
+        event: {
+          type: "permission.asked",
+          properties: {
+            id: "permission_1",
+            sessionID: "ses_1",
+            permission: "bash",
+            patterns: ["git status"],
+            metadata: {},
+            tool: { callID: "call_status" },
+          },
+        },
+      } as any)
+
+      assert.deepEqual(mock.permissionReplies, [
+        {
+          requestID: "permission_1",
+          reply: "once",
+          directory: "/workspace",
+        },
+      ])
+      assert.deepEqual(requested.filter((url) => url.includes("/permission/")), [])
+    },
+  )
+})
+
+test("Auto Mode replies through the host SDK session permission API", async () => {
+  const mock = pluginInput()
+  const posted: unknown[] = []
+  mock.input.client = {
+    async postSessionIdPermissionsPermissionId(input: unknown) {
+      posted.push(input)
+      return { data: true }
+    },
+  }
+  const requested: string[] = []
+
+  await withFetch(
+    (async (input) => {
+      requested.push(String(input))
+      return new Response(JSON.stringify(permissionResponse()), { status: 200 })
+    }) as typeof fetch,
+    async () => {
+      const hooks = await OpenCodeClassifierPlugin(mock.input, {
+        decision: { apiKey: "test", retries: 0 },
+        router: { enabled: false },
+      })
+
+      await hooks.event?.({
+        event: {
+          type: "permission.asked",
+          properties: {
+            id: "permission_1",
+            sessionID: "ses_1",
+            permission: "bash",
+            patterns: ["git status"],
+            metadata: {},
+            tool: { callID: "call_status" },
+          },
+        },
+      } as any)
+
+      assert.deepEqual(posted, [
+        {
+          path: { id: "ses_1", permissionID: "permission_1" },
+          body: { response: "once" },
+          query: { directory: "/workspace" },
+        },
+      ])
+      assert.deepEqual(requested.filter((url) => url.includes("/permission/")), [])
+    },
+  )
+})
+
+test("Auto Mode falls back to HTTP when the host client reply fails", async () => {
+  const mock = pluginInput()
+  mock.input.client.permission.reply = async () => {
+    throw new Error("client unavailable")
+  }
   const replies: Array<{ url: string; body: string }> = []
 
   await withFetch(
@@ -1009,6 +996,57 @@ test("Auto Mode responds to the host permission.asked event", async () => {
       } as any)
 
       assert.deepEqual(replies, [
+        {
+          url: "http://localhost:4096/api/session/ses_1/permission/permission_1/reply",
+          body: '{"reply":"once"}',
+        },
+      ])
+    },
+  )
+})
+
+test("Auto Mode falls back to the legacy permission reply endpoint", async () => {
+  const mock = pluginInput()
+  mock.input.client = {}
+  const replies: Array<{ url: string; body: string }> = []
+
+  await withFetch(
+    (async (input, init) => {
+      const url = String(input)
+      if (url.includes("/permission/")) {
+        replies.push({ url, body: String(init?.body) })
+        if (url.includes("/api/session/")) {
+          return new Response("not found", { status: 404 })
+        }
+        return new Response("true", { status: 200 })
+      }
+      return new Response(JSON.stringify(permissionResponse()), { status: 200 })
+    }) as typeof fetch,
+    async () => {
+      const hooks = await OpenCodeClassifierPlugin(mock.input, {
+        decision: { apiKey: "test", retries: 0 },
+        router: { enabled: false },
+      })
+
+      await hooks.event?.({
+        event: {
+          type: "permission.asked",
+          properties: {
+            id: "permission_1",
+            sessionID: "ses_1",
+            permission: "bash",
+            patterns: ["git status"],
+            metadata: {},
+            tool: { callID: "call_status" },
+          },
+        },
+      } as any)
+
+      assert.deepEqual(replies, [
+        {
+          url: "http://localhost:4096/api/session/ses_1/permission/permission_1/reply",
+          body: '{"reply":"once"}',
+        },
         {
           url: "http://localhost:4096/permission/permission_1/reply",
           body: '{"reply":"once"}',

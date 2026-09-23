@@ -8,7 +8,6 @@ The plugin provides:
 - Jev-based permission Auto Mode;
 - configurable fast/normal/deep model routing;
 - agent routing;
-- Jev-gated lazy skill loading without exposing the native skill catalog to the execution model;
 - large tool-output context filtering.
 
 ## Supported OpenCode API
@@ -354,38 +353,6 @@ The classifier mutates the current user turn's `agent` before OpenCode saves it.
 
 This continues to work when a normal real model is manually selected.
 
-## Skill routing without native skill-context exposure
-
-OpenCode 1.18 normally injects the available skill catalog into the model's system context, including every skill name and description. That creates context overhead even when almost all skills are irrelevant.
-
-When this plugin's skill routing is enabled, that native behavior is intercepted before the provider request:
-
-1. the plugin reads the native `<available_skills>` block from the system context;
-2. only the compact skill candidates (name + description) are sent to Jev;
-3. Jev scores which skill is materially useful for the current task;
-4. the entire native skill catalog is removed from the model-facing system context;
-5. only the selected skill name(s) are revealed to the model;
-6. the model is instructed to call OpenCode's built-in `skill` tool with exactly those names.
-
-The model therefore does **not** receive the normal catalog of unrelated skill descriptions.
-
-The `skill` tool definition is also rewritten so it no longer tells the model to choose from `available_skills`; it only accepts an exact classifier-selected skill name.
-
-```json
-{
-  "skills": {
-    "enabled": true,
-    "minimumProbability": 0.7,
-    "maxCandidates": 32,
-    "maxSelected": 1
-  }
-}
-```
-
-`maxCandidates` bounds how many native skill descriptions can be considered by Jev. `maxSelected` limits how many skill names are exposed to the execution model.
-
-If Jev cannot classify the skill catalog, the native catalog remains hidden and no skill is selected for that turn. Skill bodies are still loaded lazily only when the model invokes the built-in `skill` tool.
-
 ## Context filtering
 
 OpenCode 1.18 calls `experimental.chat.messages.transform` before converting persisted messages into the provider request.
@@ -462,7 +429,7 @@ See:
 opencode.example.json
 ```
 
-The example leaves agent routing disabled because agent names are project-specific. Skill routing can stay enabled because Jev selects dynamically from OpenCode's native skill catalog without a static skill-name mapping.
+The example leaves agent routing disabled because agent names are project-specific.
 
 ## Local development
 
@@ -517,7 +484,7 @@ jev model router / Auto (Jev)
 
 ## Publishing to npm
 
-The package is not yet ready for public publication. Complete the remaining real-host smoke tests for model tiers/sticky override, agent routing, and skill-catalog hiding before publishing.
+The package is not yet ready for public publication. Complete the remaining real-host smoke tests for model tiers/sticky override and agent routing before publishing.
 
 ```bash
 npm login
@@ -540,9 +507,7 @@ opencode-classifier-plugin/
 │   ├── classifier.ts
 │   ├── permission.ts
 │   ├── context.ts
-│   ├── runtime.ts
-│   ├── skills.ts
-│   └── verification.ts
+│   └── runtime.ts
 ├── test/
 │   ├── core.test.ts
 │   └── package.test.ts
@@ -561,6 +526,5 @@ opencode-classifier-plugin/
 - The model router is selectable in the normal `/models` UI.
 - OpenCode 1.18 visually restores the last real routed model after a turn; `router.sticky` keeps routing active in plugin state despite that visual limitation.
 - Selecting a different real model disables sticky routing. Re-selecting the exact same last-routed model cannot be distinguished from the TUI's automatic restoration by the public 1.18 plugin API.
-- Skill routing removes OpenCode's native skill catalog from model context; Jev sees the compact catalog and the model sees only the selected skill name(s), which it loads lazily through the built-in skill tool.
 - Provider-level retry decisions are left to OpenCode because the public 1.18 plugin API does not expose that internal hook.
 - Connected `/connect` secrets are not read by the plugin; supply the System One credential through `OPENCODE_API_KEY` or `decision.apiKey`.

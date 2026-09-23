@@ -65,12 +65,6 @@
             "security": "security"
           }
         },
-        "skills": {
-          "enabled": true,
-          "minimumProbability": 0.7,
-          "maxCandidates": 32,
-          "maxSelected": 1
-        },
         "context": {
           "enabled": true,
           "minChars": 12000,

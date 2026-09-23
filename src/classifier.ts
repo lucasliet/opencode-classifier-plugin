@@ -3,8 +3,6 @@ import type {
   PermissionSignals,
   ResolvedOptions,
   RouteClassification,
-  SkillCandidate,
-  SkillSelection,
 } from "./types.ts"
 import { choice, JevClient, noul } from "./jev.ts"
 import { safeJson, truncate } from "./config.ts"
@@ -186,55 +184,4 @@ export async function classifyPermission(
     sensitiveData: noul(response, "sensitive_data"),
     privilegeEscalation: noul(response, "privilege_escalation"),
   }
-}
-
-export async function classifySkills(
-  jev: JevClient,
-  options: ResolvedOptions,
-  task: string,
-  candidates: readonly SkillCandidate[],
-): Promise<SkillSelection[]> {
-  const bounded: SkillCandidate[] = []
-  let used = 0
-
-  for (const candidate of candidates.slice(0, options.skills.maxCandidates)) {
-    const item = {
-      name: truncate(candidate.name, 160),
-      description: truncate(candidate.description, options.privacy.maxResourceChars),
-    }
-    const cost = item.name.length + item.description.length + 64
-    if (bounded.length > 0 && used + cost > options.privacy.maxStateChars) break
-    bounded.push(item)
-    used += cost
-  }
-
-  if (bounded.length === 0) return []
-
-  const questions: Record<string, JevQuestion> = {}
-  bounded.forEach((candidate, index) => {
-    questions[`skill_${index}`] = {
-      type: "noul",
-      instructions:
-        `Would the skill named "${candidate.name}" materially improve the current task, based only on its description and the task intent?`,
-    }
-  })
-
-  const response = await jev.ask(
-    {
-      task: truncate(task, options.privacy.maxPromptChars),
-      candidates: bounded,
-      instruction:
-        "Select only skills that are directly useful. Do not solve the task. Prefer no skill over a weak match.",
-    },
-    questions,
-  )
-
-  return bounded
-    .map((candidate, index) => ({
-      name: candidate.name,
-      probability: noul(response, `skill_${index}`, 0),
-    }))
-    .filter((item) => item.probability >= options.skills.minimumProbability)
-    .sort((a, b) => b.probability - a.probability)
-    .slice(0, options.skills.maxSelected)
 }

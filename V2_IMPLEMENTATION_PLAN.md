@@ -25,8 +25,10 @@ existing product behavior:
 1. Jev-based Auto Mode for permissions.
 2. Jev-based execution-model routing.
 3. Agent routing.
-4. Skill routing.
-5. Context filtering/ranking.
+4. Context filtering/ranking.
+
+> Note: skill routing was removed from the 1.18 plugin (the native skill
+> catalog is left untouched), so there is no skill policy to migrate.
 6. Failure triage integrated with Auto Mode and loop control.
 7. Agent-loop control/circuit breaking.
 8. Post-action verification.
@@ -83,7 +85,6 @@ Decision Engine
     +--> allow / ask / deny
     +--> fast / normal / deep
     +--> agent
-    +--> skills
     +--> work / retry / verify / finish
 ```
 
@@ -108,7 +109,7 @@ opencode-classifier-plugin
    |      |
    |      +-- permission policy
    |      +-- model policy
-   |      +-- agent/skill policy
+   |      +-- agent policy
    |      +-- loop policy
    |      +-- verification policy
    |
@@ -121,7 +122,6 @@ opencode-classifier-plugin
           +-- permission evaluation
           +-- model switching
           +-- agent switching
-          +-- skill attachment
           +-- context transformation
           +-- tool lifecycle hooks
           +-- loop stop/interruption
@@ -201,13 +201,6 @@ Example logical configuration:
   "agents": {
     "enabled": true,
     "minimumConfidence": 0.85
-  },
-
-  "skills": {
-    "enabled": true,
-    "minimumProbability": 0.70,
-    "maxCandidates": 32,
-    "maxSelected": 1
   },
 
   "context": {
@@ -328,11 +321,9 @@ If it does not, retain the current explicit environment/config credential path.
 
 ### 7.6 Skills
 
-Prefer a native V2 skill attachment/resolution API when available.
-
-The 1.18 implementation currently injects a system instruction asking the model
-to call the built-in `skill` tool. In V2 this workaround should be replaced
-with actual skill attachment if the shipped API supports it.
+Skill routing was removed from the 1.18 plugin, so there is nothing to
+migrate. If skill support is ever reintroduced, prefer a native V2 skill
+attachment/resolution API when available.
 
 ## 8. Initial prompt classification
 
@@ -369,7 +360,6 @@ The same classification result should feed:
 
 - model routing;
 - agent routing;
-- skill routing;
 - initial risk context.
 
 Do not make three independent classifier calls for the same prompt when one
@@ -461,72 +451,6 @@ virtual provider fake inference endpoint
 ```
 
 Prefer a first-class selectable router mode plus a native execution-model switch.
-
-## 11. Use case 3 — Agent and Jev-gated skill routing
-
-Agent routing may reuse the initial task/domain classification.
-
-Skill routing has a stricter requirement: **the execution model must not receive
-the native catalog of all available skills or their descriptions**.
-
-The intended pipeline is:
-
-```text
-OpenCode skill registry
-        |
-        v
-compact candidate catalog
-(name + description only)
-        |
-        v
-Jev relevance classification
-        |
-        v
-selected skill(s)
-        |
-        +--> native V2 skill attachment/load, if supported
-        |
-        +--> exact selected skill name(s) only
-             visible to execution model
-```
-
-The execution model must never be given the full skill catalog just so it can
-decide which skill to use. Jev performs that discovery/routing step.
-
-Requirements:
-
-- remove/suppress OpenCode's ambient available-skill guidance before the
-  execution-model request;
-- send only bounded skill name + description candidates to Jev;
-- never send skill locations or bodies merely for routing;
-- expose only selected skill name(s) to the execution model;
-- load skill bodies lazily only after selection;
-- default to no skill when confidence is below threshold;
-- bound candidate count and selected count;
-- do not use a static `domain -> skill` map as the primary selector.
-
-Example logical configuration:
-
-```jsonc
-{
-  "agents": {
-    "byDomain": {
-      "frontend": "frontend",
-      "backend": "backend",
-      "database": "database",
-      "security": "security"
-    }
-  },
-  "skills": {
-    "minimumProbability": 0.70,
-    "maxCandidates": 32,
-    "maxSelected": 1
-  }
-}
-```
-
-In V2, prefer a native skill attachment/load API after Jev selection. Native
-attachment must not re-introduce the full catalog into the model context.
 
 ## 12. Use case 4 — Context filtering/ranking
 
@@ -640,7 +564,6 @@ interface SessionTaskState {
   route?: {
     modelTier?: "fast" | "normal" | "deep"
     agent?: string
-    skills?: string[]
   }
 
   round: number
@@ -866,7 +789,7 @@ If the shipped V2 API supports custom commands, add:
 - Jev signals/probabilities;
 - local threshold/policy applied;
 - selected model tier/model;
-- selected agent/skills;
+- selected agent;
 - permission result;
 - latency;
 - verification state.
@@ -900,8 +823,7 @@ src/
 ├── routing/
 │   ├── classifier.ts
 │   ├── model.ts
-│   ├── agent.ts
-│   └── skill.ts
+│   └── agent.ts
 ├── context/
 │   ├── candidates.ts
 │   ├── ranker.ts

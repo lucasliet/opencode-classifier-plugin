@@ -52,8 +52,6 @@ test("opencode.example.json uses the 1.18 plugin tuple shape", async () => {
     deny: ["git push --force *"],
   })
   assert.equal(resolved.context.maxBatches, 4)
-  assert.equal(resolved.skills.enabled, true)
-  assert.equal(resolved.skills.maxSelected, 1)
   assert.equal(resolved.decision.model, "jev-1.13-free")
   assert.equal("integrationID" in resolved.decision, false)
 })
