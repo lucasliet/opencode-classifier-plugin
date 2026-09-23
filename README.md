@@ -1,0 +1,685 @@
+# opencode-classifier-plugin
+
+Jev/System One classifier layer for **OpenCode 1.18.x**.
+
+The plugin provides:
+
+- a selectable **jev model router / Auto (Jev)** model in `/models`;
+- Jev-based permission Auto Mode;
+- configurable fast/normal/deep model routing;
+- agent routing;
+- Jev-gated lazy skill loading without exposing the native skill catalog to the execution model;
+- large tool-output context filtering;
+- tool failure triage;
+- loop/circuit-breaker control;
+- post-mutation verification.
+
+## Supported OpenCode API
+
+This package targets the public plugin API shipped with OpenCode **1.18.x**:
+
+```text
+@opencode-ai/plugin
+```
+
+The implementation uses the classic plugin hooks that are available to the 1.18 binary:
+
+```text
+config
+chat.message
+event
+tool.execute.before
+tool.execute.after
+experimental.chat.messages.transform
+experimental.chat.system.transform
+dispose
+```
+
+It does **not** depend on the internal/unreleased OpenCode V2 plugin API.
+
+If your installed OpenCode reports a 1.18 version, you do not need to install a different binary for this plugin:
+
+```bash
+opencode --version
+```
+
+## How the selectable model router works on 1.18
+
+The plugin injects a custom provider into OpenCode's merged configuration during the `config` hook.
+
+It appears in `/models` as:
+
+```text
+jev model router
+  Auto (Jev)
+```
+
+Technical reference:
+
+```text
+jev-model-router/auto
+```
+
+The provider uses an intentionally unreachable placeholder endpoint. It is never supposed to receive an inference request.
+
+When `jev-model-router/auto` is selected, OpenCode creates the user turn using that selected model. Before the turn is saved, the plugin's `chat.message` hook classifies the request with Jev and rewrites **only that turn's saved model** to the configured real execution model.
+
+```text
+UI/session selection
+jev-model-router/auto
+        |
+        v
+chat.message
+        |
+        v
+Jev classification
+        |
+        +--> fast
+        +--> normal
+        +--> deep
+        |
+        v
+saved user turn uses real model
+        |
+        v
+OpenCode agent loop runs real model
+```
+
+OpenCode 1.18 has one UI limitation: after the routed user message is saved, the TUI restores its visible picker from that message and therefore displays the real routed model rather than `jev-model-router/auto`.
+
+By default `router.sticky` is `true`. The plugin remembers that the router was activated and the last model it selected. If the next prompt arrives with exactly that routed model selected, the plugin treats it as the TUI's automatic restoration and routes again. Selecting a **different** real model disables sticky router mode.
+
+```json
+{
+  "router": {
+    "sticky": true
+  }
+}
+```
+
+Set `sticky` to `false` if you prefer one-shot behavior: selecting `jev-model-router/auto` routes one prompt, then the real model shown by the TUI is used normally on subsequent prompts until you select the router again.
+
+Because OpenCode 1.18 does not expose a public "set selected model" API to plugins, sticky mode cannot distinguish the user deliberately re-selecting the exact same real model that the router just chose. To disable sticky routing in that edge case, select a different real model first, or configure `sticky: false`.
+
+If you manually select a different real model, for example:
+
+```text
+opencode-go/gpt-5.6-luna
+```
+
+the next user turn disables model routing and your explicit model selection wins.
+
+## Installation
+
+After publishing:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+    [
+      "opencode-classifier-plugin",
+      {
+        "router": {
+          "models": {
+            "fast": "opencode-go/glm-5.3-flash",
+            "normal": "opencode-go/gpt-5.6-luna",
+            "deep": "opencode/gpt-5.6-sol"
+          }
+        }
+      }
+    ]
+  ]
+}
+```
+
+OpenCode 1.18 uses the **singular** `plugin` field.
+
+Plugin entries may be strings or `[package, options]` tuples. This plugin uses the tuple form because its routing/policy configuration is supplied as plugin options.
+
+A full example is provided in:
+
+```text
+opencode.example.json
+```
+
+Restart OpenCode after changing the plugin configuration.
+
+## Jev / System One authentication
+
+Default decision endpoint:
+
+```text
+https://opencode.ai/zen/v1/systemone
+```
+
+Default classifier:
+
+```text
+jev-1.13-free
+```
+
+The OpenCode 1.18 public plugin API does not expose a supported method for reading provider secrets that were stored by `/connect`.
+
+Therefore the classifier credential is resolved in this order:
+
+1. `decision.apiKey`;
+2. environment variable configured by `decision.apiKeyEnv`.
+
+Default:
+
+```text
+OPENCODE_API_KEY
+```
+
+Recommended:
+
+```bash
+export OPENCODE_API_KEY="your-opencode-zen-key"
+opencode
+```
+
+Do not commit an API key into `opencode.json`.
+
+If you use a local or otherwise unauthenticated System One-compatible endpoint:
+
+```json
+{
+  "decision": {
+    "endpoint": "http://127.0.0.1:8000/v1/systemone",
+    "model": "jev-local",
+    "requireAuth": false
+  }
+}
+```
+
+## Decision provider configuration
+
+```json
+{
+  "decision": {
+    "endpoint": "https://opencode.ai/zen/v1/systemone",
+    "model": "jev-1.13-free",
+    "apiKeyEnv": "OPENCODE_API_KEY",
+    "requireAuth": true,
+    "timeoutMs": 2500,
+    "retries": 1
+  }
+}
+```
+
+The System One client:
+
+- supports `noul`, `choice`, and score responses used by the plugin;
+- validates that every requested answer exists;
+- creates a fresh timeout/AbortController for each attempt;
+- retries network errors, timeouts, HTTP 408, HTTP 429, and HTTP 5xx;
+- does not automatically retry definitive HTTP 4xx responses.
+
+## Execution models
+
+Jev only chooses a tier. The real execution models belong in your OpenCode configuration:
+
+```json
+{
+  "router": {
+    "enabled": true,
+    "sticky": true,
+    "models": {
+      "fast": "opencode-go/glm-5.3-flash",
+      "normal": "opencode-go/gpt-5.6-luna",
+      "deep": "opencode/gpt-5.6-sol"
+    },
+    "efforts": {
+      "fast": "low",
+      "normal": "medium",
+      "deep": "high"
+    },
+    "fallbackTier": "normal"
+  }
+}
+```
+
+Replace those examples with any model references that exist in your own `/models` picker.
+
+No execution model is hardcoded in the plugin source.
+
+`router.efforts` configures the reasoning-effort variant for each selected tier. Use the exact variant identifier shown by `/models <provider> --verbose`, such as `low`, `medium`, `high`, or `max`. The configured effort takes precedence over a `#variant` included in `router.models`; omit the tier from `efforts` to preserve that embedded variant. A model without the configured variant must not receive an effort for that tier.
+
+Default routing thresholds:
+
+```json
+{
+  "thresholds": {
+    "fastChoice": 0.72,
+    "deepChoice": 0.58,
+    "deepReasoning": 0.72,
+    "highRisk": 0.72
+  }
+}
+```
+
+Policy:
+
+- confident simple/low-risk task -> `fast`;
+- strong deep-complexity, deep-reasoning, or high-risk signal -> `deep`;
+- otherwise -> `normal`;
+- Jev unavailable -> `fallbackTier`.
+
+## Permission Auto Mode
+
+OpenCode 1.18 emits real pending requests as `permission.asked` events. The
+plugin observes that host event and replies through the matching server endpoint
+before the user responds.
+
+The plugin classifies each request and then:
+
+- Jev/local policy says **allow** -> sends `once`;
+- policy says **deny** and `denyHighRisk` is enabled -> sends `reject`;
+- policy says **ask** -> does not reply, so the normal OpenCode permission UI remains in control;
+- classifier unavailable -> does not reply, so the user is asked.
+
+Do not enable OpenCode's separate blanket auto-accept mode if you want Jev to make these decisions; blanket auto-accept can answer the request before the classifier.
+
+`autoMode.onError: "ask"` changes the legacy hook fallback to `ask`. With the
+real 1.18 event flow, both `ask` and `preserve` leave the pending host request
+unanswered: the event contains no prior policy result to preserve, and replying
+would be fail-open. Use `ask` in OpenCode 1.18 configurations.
+
+Signals include:
+
+- read-only;
+- modifies project;
+- outside workspace;
+- destructive;
+- reversible;
+- changes VCS history;
+- executes downloaded code;
+- external side effect;
+- sensitive data;
+- privilege escalation.
+
+Example:
+
+```json
+{
+  "autoMode": {
+    "enabled": true,
+    "onError": "ask",
+    "allowReversibleProjectChanges": true,
+    "denyHighRisk": false,
+    "thresholds": {
+      "autoAllow": 0.8,
+      "projectChange": 0.6,
+      "reversibleAllow": 0.88,
+      "riskAsk": 0.45,
+      "deny": 0.65
+    }
+  }
+}
+```
+
+An OpenCode permission already configured as `allow` does not emit an event, so the plugin cannot re-review it. Configure potentially sensitive actions as `ask` if you want Jev Auto Mode to evaluate them. An explicit OpenCode `deny` is never converted to `allow`.
+
+## Agent routing
+
+Agent routing is independent of model routing.
+
+```json
+{
+  "agents": {
+    "enabled": true,
+    "minimumProbability": 0.85,
+    "byDomain": {
+      "frontend": "frontend",
+      "backend": "backend",
+      "database": "database",
+      "security": "security"
+    }
+  }
+}
+```
+
+The classifier mutates the current user turn's `agent` before OpenCode saves it. The configured values must match real OpenCode agent names.
+
+This continues to work when a normal real model is manually selected.
+
+## Skill routing without native skill-context exposure
+
+OpenCode 1.18 normally injects the available skill catalog into the model's system context, including every skill name and description. That creates context overhead even when almost all skills are irrelevant.
+
+When this plugin's skill routing is enabled, that native behavior is intercepted before the provider request:
+
+1. the plugin reads the native `<available_skills>` block from the system context;
+2. only the compact skill candidates (name + description) are sent to Jev;
+3. Jev scores which skill is materially useful for the current task;
+4. the entire native skill catalog is removed from the model-facing system context;
+5. only the selected skill name(s) are revealed to the model;
+6. the model is instructed to call OpenCode's built-in `skill` tool with exactly those names.
+
+The model therefore does **not** receive the normal catalog of unrelated skill descriptions.
+
+The `skill` tool definition is also rewritten so it no longer tells the model to choose from `available_skills`; it only accepts an exact classifier-selected skill name.
+
+```json
+{
+  "skills": {
+    "enabled": true,
+    "minimumProbability": 0.7,
+    "maxCandidates": 32,
+    "maxSelected": 1
+  }
+}
+```
+
+`maxCandidates` bounds how many native skill descriptions can be considered by Jev. `maxSelected` limits how many skill names are exposed to the execution model.
+
+If Jev cannot classify the skill catalog, the native catalog remains hidden and no skill is selected for that turn. Skill bodies are still loaded lazily only when the model invokes the built-in `skill` tool.
+
+## Context filtering
+
+OpenCode 1.18 calls `experimental.chat.messages.transform` before converting persisted messages into the provider request.
+
+The plugin:
+
+1. makes a structural copy of the request messages;
+2. finds large completed tool outputs in `ToolPart.state.output`;
+3. divides them into bounded chunks;
+4. asks Jev which chunks are relevant;
+5. removes low-relevance processed chunks only from the copied request;
+6. assigns the copied request back to the hook output.
+
+Persisted session history is not modified.
+
+```json
+{
+  "context": {
+    "enabled": true,
+    "minChars": 12000,
+    "chunkChars": 2500,
+    "minimumCandidates": 6,
+    "maxCandidates": 24,
+    "maxBatches": 4,
+    "relevantAt": 0.52
+  }
+}
+```
+
+Any unprocessed tail beyond the configured batch cap is preserved.
+
+Filtering failure preserves the original request context.
+
+A bounded in-memory cache avoids sending the same task/output combination to Jev repeatedly during the same OpenCode process.
+
+## Failure triage
+
+Tool failures are observed from OpenCode's real `message.part.updated` events when:
+
+```text
+part.type === "tool"
+part.state.status === "error"
+```
+
+Jev classifies the failure as:
+
+- `transient`;
+- `environment`;
+- `permission`;
+- `invalid_input`;
+- `dependency`;
+- `test_failure`;
+- `code_bug`;
+- `tool_bug`;
+- `unknown`.
+
+It also evaluates `retrySafe` and `requiresUser`.
+
+The public 1.18 API does not expose the internal provider retry-decision hook, so the plugin **does not override OpenCode's provider-level retry algorithm**. Failure triage instead drives the plugin's agent/tool loop state machine: transient-safe failures enter `RETRY`, user-dependent failures enter `HUMAN`, and other failures return to `WORK` for a changed approach.
+
+## Loop controller
+
+The loop controller is an explicit per-task state machine:
+
+```text
+WORK
+  ├─ transient safe failure ──> RETRY
+  ├─ mutation completed ──────> VERIFY
+  ├─ Jev says evidence enough -> FINISH
+  └─ missing user input/auth ─> HUMAN
+
+RETRY
+  ├─ successful retry ────────> WORK / Jev-selected next state
+  └─ repeated failure ────────> HUMAN
+
+VERIFY
+  ├─ sufficient validation ───> FINISH
+  ├─ failing validation ──────> WORK
+  └─ weak validation ─────────> VERIFY
+
+FINISH / HUMAN
+  └─ further tool calls are blocked
+```
+
+Configuration:
+
+```json
+{
+  "loop": {
+    "enabled": true,
+    "maxRounds": 24,
+    "maxSameFailure": 2,
+    "classifySuccesses": true,
+    "decisionAt": 0.78
+  }
+}
+```
+
+Behavior:
+
+- every permitted tool call increments the current turn's round count;
+- after a successful non-mutating tool result, Jev can choose `work`, `retry`, `verify`, `finish`, or `human`;
+- a Jev loop decision is applied only when its probability reaches `decisionAt`;
+- mutation deterministically enters `VERIFY` when post-action verification is required;
+- while in `VERIFY`, additional mutations are blocked until relevant validation resolves the state;
+- validation failure returns the controller to `WORK`;
+- sufficient validation enters `FINISH`;
+- failures classified as requiring credentials, authorization, missing information, or a product decision enter `HUMAN`;
+- a safe transient failure enters `RETRY`;
+- repeating the same failure more than `maxSameFailure` enters `HUMAN`;
+- reaching `maxRounds` enters `FINISH`.
+
+`FINISH` and `HUMAN` are enforced, not just advisory. If the model attempts another tool, `tool.execute.before` blocks the call and uses `client.session.abort({ path: { id: sessionID } })`.
+
+The public 1.18 API still does not expose OpenCode's internal provider-retry hook, so this state machine controls **agent/tool progression**, not transport/provider retries.
+
+## Post-action verification
+
+Mutation-like tool calls create a verification requirement.
+
+Built-in mutation detection covers edit/write/apply-patch/deploy-style tools. Shell commands are inspected rather than treating all shell commands as mutations.
+
+Examples considered read-only:
+
+```bash
+git status
+git diff
+git log
+rg pattern
+grep pattern file
+cat file
+ls
+pwd
+```
+
+Validation examples:
+
+```bash
+npm test
+pnpm test
+npx vitest run
+npx jest
+pytest
+tsc
+eslint .
+biome check
+cargo test
+go test ./...
+```
+
+Unknown or compound shell commands remain conservative.
+
+For example:
+
+```bash
+npm test && rm -rf dist
+```
+
+is treated as potentially mutating.
+
+A successful validation tool is evaluated against the original task using:
+
+- sufficient evidence;
+- failures present;
+- changed behavior exercised.
+
+Jev evaluates validation evidence; it does not replace the test runner.
+
+## Privacy
+
+Default:
+
+```json
+{
+  "privacy": {
+    "maxStateChars": 24000,
+    "maxPromptChars": 8000,
+    "maxEvidenceChars": 12000,
+    "maxResourceChars": 4000,
+    "includePermissionMetadata": false
+  }
+}
+```
+
+The plugin does not proactively send the entire repository or entire conversation to Jev.
+
+Potentially transmitted data:
+
+- bounded current prompt for routing;
+- permission action and patterns;
+- permission metadata only when explicitly enabled;
+- bounded failure evidence;
+- bounded validation evidence;
+- bounded chunks of large tool output selected for relevance classification.
+
+For zero external classifier traffic, point `decision.endpoint` at a local System One-compatible service.
+
+## Complete configuration
+
+See:
+
+```text
+opencode.example.json
+```
+
+The example leaves agent routing disabled because agent names are project-specific. Skill routing can stay enabled because Jev selects dynamically from OpenCode's native skill catalog without a static skill-name mapping.
+
+## Local development
+
+```bash
+npm install
+npm run typecheck
+npm test
+npm run check
+npm run pack:check
+```
+
+For local OpenCode testing, use a file plugin reference:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+    [
+      "file:///absolute/path/to/opencode-classifier-plugin",
+      {
+        "router": {
+          "models": {
+            "fast": "opencode-go/glm-5.3-flash",
+            "normal": "opencode-go/gpt-5.6-luna",
+            "deep": "opencode/gpt-5.6-sol"
+          }
+        }
+      }
+    ]
+  ]
+}
+```
+
+Then start OpenCode with the classifier credential available:
+
+```bash
+export OPENCODE_API_KEY="..."
+opencode
+```
+
+Run:
+
+```text
+/models
+```
+
+and select:
+
+```text
+jev model router / Auto (Jev)
+```
+
+## Publishing to npm
+
+The package is not yet ready for public publication. Complete the remaining real-host smoke tests for model tiers/sticky override, agent routing, skill-catalog hiding, loop state transitions, and post-action verification before publishing.
+
+```bash
+npm login
+npm run check
+npm run pack:check
+npm publish --access public
+```
+
+`prepublishOnly` runs both `npm run check` and `npm run pack:check`.
+
+## Package layout
+
+```text
+opencode-classifier-plugin/
+├── src/
+│   ├── index.ts
+│   ├── types.ts
+│   ├── config.ts
+│   ├── jev.ts
+│   ├── classifier.ts
+│   ├── permission.ts
+│   ├── context.ts
+│   ├── runtime.ts
+│   ├── skills.ts
+│   └── verification.ts
+├── test/
+│   ├── core.test.ts
+│   └── package.test.ts
+├── opencode.example.json
+├── package.json
+├── tsconfig.json
+├── LICENSE
+└── README.md
+```
+
+## Compatibility notes
+
+- Target runtime: OpenCode **1.18.x**.
+- Plugin API: `@opencode-ai/plugin`.
+- No OpenCode V2 binary or V2 plugin host is required.
+- The model router is selectable in the normal `/models` UI.
+- OpenCode 1.18 visually restores the last real routed model after a turn; `router.sticky` keeps routing active in plugin state despite that visual limitation.
+- Selecting a different real model disables sticky routing. Re-selecting the exact same last-routed model cannot be distinguished from the TUI's automatic restoration by the public 1.18 plugin API.
+- Skill routing removes OpenCode's native skill catalog from model context; Jev sees the compact catalog and the model sees only the selected skill name(s), which it loads lazily through the built-in skill tool.
+- Provider-level retry decisions are left to OpenCode because the public 1.18 plugin API does not expose that internal hook.
+- Connected `/connect` secrets are not read by the plugin; supply the System One credential through `OPENCODE_API_KEY` or `decision.apiKey`.

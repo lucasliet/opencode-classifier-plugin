@@ -1,0 +1,97 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+    [
+      "opencode-classifier-plugin",
+      {
+        "decision": {
+          "endpoint": "https://opencode.ai/zen/v1/systemone",
+          "model": "jev-1.13-free",
+          "apiKeyEnv": "OPENCODE_API_KEY",
+          "requireAuth": true,
+          "timeoutMs": 2500,
+          "retries": 1
+        },
+        "router": {
+          "enabled": true,
+          "sticky": true,
+          "models": {
+            "fast": "opencode-go/glm-5.3-flash",
+            "normal": "opencode-go/gpt-5.6-luna",
+            "deep": "opencode/gpt-5.6-sol"
+          },
+          "efforts": {
+            "fast": "low",
+            "normal": "medium",
+            "deep": "high"
+          },
+          "fallbackTier": "normal",
+          "thresholds": {
+            "fastChoice": 0.72,
+            "deepChoice": 0.58,
+            "deepReasoning": 0.72,
+            "highRisk": 0.72
+          }
+        },
+        "autoMode": {
+          "enabled": true,
+          "onError": "ask",
+          "allowReversibleProjectChanges": true,
+          "denyHighRisk": false,
+          "thresholds": {
+            "autoAllow": 0.8,
+            "projectChange": 0.6,
+            "reversibleAllow": 0.88,
+            "riskAsk": 0.45,
+            "deny": 0.65
+          }
+        },
+        "agents": {
+          "enabled": false,
+          "minimumProbability": 0.85,
+          "byDomain": {
+            "frontend": "frontend",
+            "backend": "backend",
+            "database": "database",
+            "security": "security"
+          }
+        },
+        "skills": {
+          "enabled": true,
+          "minimumProbability": 0.7,
+          "maxCandidates": 32,
+          "maxSelected": 1
+        },
+        "context": {
+          "enabled": true,
+          "minChars": 12000,
+          "chunkChars": 2500,
+          "minimumCandidates": 6,
+          "maxCandidates": 24,
+          "maxBatches": 4,
+          "relevantAt": 0.52
+        },
+        "loop": {
+          "enabled": true,
+          "maxRounds": 24,
+          "maxSameFailure": 2,
+          "classifySuccesses": true,
+          "decisionAt": 0.78
+        },
+        "verification": {
+          "enabled": true,
+          "requiredAfterMutation": true,
+          "sufficientAt": 0.8,
+          "needsMoreBelow": 0.3
+        },
+        "privacy": {
+          "maxStateChars": 24000,
+          "maxPromptChars": 8000,
+          "maxEvidenceChars": 12000,
+          "maxResourceChars": 4000,
+          "includePermissionMetadata": false
+        }
+      }
+    ]
+  ]
+}
