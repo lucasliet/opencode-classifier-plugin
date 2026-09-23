@@ -12,7 +12,7 @@ import { JevClient } from "../src/jev.ts"
 import {
   OpenCodeClassifierPlugin,
   installVirtualProvider,
-} from "../src/index.ts"
+} from "../src/v1.ts"
 import { decidePermission } from "../src/permission.ts"
 import { eventSessionID } from "../src/runtime.ts"
 

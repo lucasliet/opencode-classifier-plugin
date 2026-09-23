@@ -14,7 +14,8 @@
     "src",
     "README.md",
     "LICENSE",
-    "opencode.example.json"
+    "opencode.example.json",
+    "opencode.example.jsonc"
   ],
   "keywords": [
     "opencode",
@@ -44,5 +45,8 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "dependencies": {
+    "@opencode/plugin": "^2.0.15"
   }
 }

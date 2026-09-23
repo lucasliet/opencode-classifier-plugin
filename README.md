@@ -1,6 +1,7 @@
 # opencode-classifier-plugin
 
-Jev/System One classifier layer for **OpenCode 1.18.x**.
+Jev/System One classifier layer for **OpenCode V2 (>= 2.0)** with a
+compatibility implementation for **OpenCode 1.18 (>= 1.18.29)**.
 
 The plugin provides:
 
@@ -12,24 +13,19 @@ The plugin provides:
 
 ## Supported OpenCode API
 
-This package targets the public plugin API shipped with OpenCode **1.18.x**:
+One package serves both runtimes from a single default export:
 
 ```text
-@opencode-ai/plugin
+V2 (>= 2.0):  id + setup()   via @opencode/plugin
+V1 (>= 1.18.29): server()    via @opencode-ai/plugin
 ```
 
-The implementation uses the classic plugin hooks that are available to the 1.18 binary:
-
-```text
-config
-chat.message
-event
-experimental.chat.messages.transform
-experimental.chat.system.transform
-dispose
-```
-
-It does **not** depend on the internal/unreleased OpenCode V2 plugin API.
+On V2 the plugin uses native primitives (`permission.hook("evaluate")`,
+`session.hook("prompt"/"context")`, `session.switchModel`/`switchAgent`,
+`provider.transform`). On V1 it uses the classic hooks (`permission.ask`,
+`chat.message`, `event`, the experimental transforms) plus the SDK reply
+workaround. Pure decision logic (Jev client, classifier, permission policy,
+context filter) is shared.
 
 If your installed OpenCode reports a 1.18 version, you do not need to install a different binary for this plugin:
 
@@ -127,7 +123,34 @@ After publishing:
 }
 ```
 
-OpenCode 1.18 uses the **singular** `plugin` field.
+OpenCode 1.18 uses the **singular** `plugin` field. OpenCode V2 uses the
+**plural** `plugins` field with `{ "package", "options" }` objects:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    {
+      "package": "opencode-classifier-plugin",
+      "options": {
+        "router": {
+          "models": {
+            "fast": "opencode-go/glm-5.3-flash",
+            "normal": "opencode-go/gpt-5.6-luna",
+            "deep": "opencode/gpt-5.6-sol"
+          }
+        }
+      }
+    }
+  ]
+}
+```
+
+A V2 example is provided in:
+
+```text
+opencode.example.jsonc
+```
 
 Plugin entries may be strings or `[package, options]` tuples. This plugin uses the tuple form because its routing/policy configuration is supplied as plugin options.
 
@@ -426,10 +449,11 @@ For zero external classifier traffic, point `decision.endpoint` at a local Syste
 See:
 
 ```text
-opencode.example.json
+opencode.example.json    (V1 tuple form)
+opencode.example.jsonc   (V2 object form)
 ```
 
-The example leaves agent routing disabled because agent names are project-specific.
+The examples leave agent routing disabled because agent names are project-specific.
 
 ## Local development
 
@@ -520,11 +544,19 @@ opencode-classifier-plugin/
 
 ## Compatibility notes
 
-- Target runtime: OpenCode **1.18.x**.
-- Plugin API: `@opencode-ai/plugin`.
-- No OpenCode V2 binary or V2 plugin host is required.
+- Target runtimes: OpenCode **V2 (>= 2.0.15, verified)** and OpenCode
+  **V1 (>= 1.18.29)**. Older V1 releases expect function exports instead of
+  the `{ id, setup(), server() }` object form.
+- Plugin APIs: `@opencode/plugin` (V2) and `@opencode-ai/plugin` (V1 types).
+- On V2, permission evaluation runs **before** any prompt is published, so an
+  allowed action never flashes a permission dialog first.
+- On V2, routing is per prompt through native `switchModel`; there is no
+  sticky workaround. A manually selected model is respected: the router only
+  engages for the virtual `Auto (Jev)` model (or the global default when it
+  is the virtual model and no dispatch has been observed yet).
+- Permission decisions are cached for 45 seconds per exact action+resources.
 - The model router is selectable in the normal `/models` UI.
-- OpenCode 1.18 visually restores the last real routed model after a turn; `router.sticky` keeps routing active in plugin state despite that visual limitation.
-- Selecting a different real model disables sticky routing. Re-selecting the exact same last-routed model cannot be distinguished from the TUI's automatic restoration by the public 1.18 plugin API.
-- Provider-level retry decisions are left to OpenCode because the public 1.18 plugin API does not expose that internal hook.
+- V1 only: OpenCode 1.18 visually restores the last real routed model after a turn; `router.sticky` keeps routing active in plugin state despite that visual limitation.
+- V1 only: selecting a different real model disables sticky routing. Re-selecting the exact same last-routed model cannot be distinguished from the TUI's automatic restoration by the public 1.18 plugin API.
+- V1 only: provider-level retry decisions are left to OpenCode because the public 1.18 plugin API does not expose that internal hook.
 - Connected `/connect` secrets are not read by the plugin; supply the System One credential through `OPENCODE_API_KEY` or `decision.apiKey`.

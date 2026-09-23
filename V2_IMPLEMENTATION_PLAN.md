@@ -1,15 +1,23 @@
 # OpenCode Plugin API V2 — Implementation Plan
 
-> **Status: FUTURE / DO NOT IMPLEMENT YET**
+> **Status: IN PROGRESS (migrated 2026-09-23, verified against OpenCode
+> v2.0.15 + `@opencode/plugin` 2.0.15)**
 >
-> The production plugin currently targets **OpenCode 1.18.x** and the public
-> `@opencode-ai/plugin` API. This document preserves the planned V2
-> architecture for the point at which an official OpenCode binary actually
-> exposes the V2 plugin API.
+> Phase 0 passed: the installed v2.0.15 binary loads `Plugin.define({ id,
+> setup })` plugins, and a probe plugin verified `permission.hook("evaluate")`
+> (fires with `{ sessionID, agent, action, resources, effect, source }`;
+> setting `effect = "allow"` suppresses the prompt), `session.hook("prompt")`
+> (fires with `{ sessionID, prompt, delivery }`), `session.hook("context")`
+> (fires per dispatch with `{ sessionID, agent, model, system, messages }`),
+> `session.switchModel`/`switchAgent`, `provider.transform` (a virtual
+> provider appears in the model list), `integration.list`, and event
+> subscriptions. `session.get` does NOT expose the session model, so the
+> router mirrors it from context events (see §10).
 >
-> Before starting this migration, verify the API against the **installed
-> OpenCode binary and its published plugin package/types**. Do not migrate based
-> only on unreleased source code or internal V2 specs.
+> The production plugin ships a dual entrypoint: V2 reads `id` + `setup()`,
+> V1 (>= 1.18.29) calls `server()` (object form verified on 1.18.32).
+> Pure decision logic (Jev client, classifier, permission policy, context
+> filter) is shared between both adapters (`src/v1.ts`, `src/v2.ts`).
 >
 > > **Historical note:** the loop controller, failure triage, and post-action
 > > verification were removed from the 1.18 implementation. The V2 sections
@@ -1210,37 +1218,37 @@ The V2 migration is complete only when:
 ## V2 migration checklist
 
 ```text
-[ ] Official V2-enabled OpenCode binary released
-[ ] Exact V2 plugin package/version identified
-[ ] Probe plugin passes against real binary
-[ ] Permission evaluation hook verified
-[ ] Model switching verified
-[ ] Agent switching verified
-[ ] Skill API verified
-[ ] Tool success/failure lifecycle verified
-[ ] Context hook verified
-[ ] Credential/integration API verified
-[ ] Loop stop/finalize primitive verified
+[x] Official V2-enabled OpenCode binary released (v2.0.15)
+[x] Exact V2 plugin package/version identified (@opencode/plugin 2.0.15)
+[x] Probe plugin passes against real binary
+[x] Permission evaluation hook verified
+[x] Model switching verified
+[x] Agent switching verified
+[ ] Skill API verified (not needed: skill routing removed)
+[x] Tool success/failure lifecycle verified (not used by remaining features)
+[x] Context hook verified
+[ ] Credential/integration API verified (env credential retained; see §7.5)
+[ ] Loop stop/finalize primitive verified (not needed: loop control removed)
 
-[ ] V2 entrypoint implemented
-[ ] Decision provider ported
-[ ] Auto Mode ported
-[ ] Model router ported
-[ ] 1.18 sticky workaround removed
-[ ] Agent router ported
-[ ] Skill router ported
-[ ] Native skill catalog hidden from execution-model context
-[ ] Jev selects skills from bounded name+description candidates
-[ ] Failure triage ported
-[ ] WORK/RETRY/VERIFY/FINISH/HUMAN loop state machine ported
-[ ] Verification ported
-[ ] Context filtering ported
-[ ] Audit/cache/privacy ported
+[x] V2 entrypoint implemented
+[x] Decision provider ported
+[x] Auto Mode ported
+[x] Model router ported
+[x] 1.18 sticky workaround removed (V2 adapter; V1 adapter keeps it)
+[x] Agent router ported
+[ ] Skill router ported (removed, not migrated)
+[ ] Native skill catalog hidden from execution-model context (removed)
+[ ] Jev selects skills from bounded name+description candidates (removed)
+[ ] Failure triage ported (removed, not migrated)
+[ ] WORK/RETRY/VERIFY/FINISH/HUMAN loop state machine ported (removed)
+[ ] Verification ported (removed, not migrated)
+[x] Context filtering ported
+[ ] Audit/cache/privacy ported (permission cache 45s TTL added; full audit deferred)
 
-[ ] Unit tests pass
-[ ] V2 integration tests pass
-[ ] Real-binary smoke tests pass
-[ ] Compatibility/versioning strategy finalized
-[ ] README updated
-[ ] Release package dry-run verified
+[x] Unit tests pass
+[x] V2 integration tests pass (mocked ctx)
+[x] Real-binary smoke tests pass (setup, permission allow, router switch, manual override)
+[x] Compatibility/versioning strategy finalized (dual entrypoint; V1 >= 1.18.29, V2 >= 2.0.15)
+[x] README updated
+[x] Release package dry-run verified
 ```

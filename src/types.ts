@@ -172,5 +172,9 @@ export interface SessionRuntimeState {
   lastRoutedModel?: ModelRef
   turnModel?: ModelRef
   routedTier?: ModelTier
+  /** Last model observed for the session (v2 context hook mirror). */
+  mirrorModel?: ModelRef
+  /** Whether the last model switch was performed by the router. */
+  routedByUs?: boolean
   directives: string[]
 }

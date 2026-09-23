@@ -1,5 +1,4 @@
 import type { Config, Plugin } from "@opencode-ai/plugin"
-import { appendFileSync } from "node:fs"
 import {
   VIRTUAL_MODEL_ID,
   VIRTUAL_MODEL_NAME,
@@ -23,6 +22,7 @@ import {
   eventSessionID,
   pushDirective,
 } from "./runtime.ts"
+import { createTracer } from "./trace.ts"
 import type {
   ModelRef,
   ResolvedOptions,
@@ -41,23 +41,8 @@ export const OpenCodeClassifierPlugin: Plugin = async (
   const contextFilterCache = new Map<string, string | undefined>()
 
   // Trace goes to a file because stderr is interleaved into the TUI and
-  // cannot be read comfortably mid-session. File logging is always on;
-  // console output stays gated behind debug.
-  const trace = (message: string, details: Record<string, unknown>) => {
-    try {
-      appendFileSync(
-        process.env.OPENCODE_CLASSIFIER_LOG ??
-          "/tmp/opencode-classifier-plugin.log",
-        `${new Date().toISOString()} ${message} ${safeJson(details, 1_000)}\n`,
-      )
-    } catch {
-      // Logging must never break the plugin.
-    }
-    if (!options.debug) return
-    console.error(
-      `[opencode-classifier-plugin] ${message} ${safeJson(details, 1_000)}`,
-    )
-  }
+  // cannot be read comfortably mid-session. See src/trace.ts.
+  const trace = createTracer(options.debug)
 
   const stateFor = (sessionID: string): SessionRuntimeState => {
     let state = sessions.get(sessionID)
@@ -99,6 +84,17 @@ export const OpenCodeClassifierPlugin: Plugin = async (
         modelRefMatches(selected, state.lastRoutedModel)
       const useRouter =
         options.router.enabled && (selectedVirtual || stickyContinuation)
+      trace("v1 router selected", {
+        sessionID: output.message.sessionID,
+        selected: `${selected.providerID}/${selected.id}${selected.variant ? `#${selected.variant}` : ""}`,
+        selectedVirtual,
+        stickyContinuation,
+        useRouter,
+        routerActive: state.routerActive,
+        lastRouted: state.lastRoutedModel
+          ? `${state.lastRoutedModel.providerID}/${state.lastRoutedModel.id}`
+          : undefined,
+      })
 
       if (selectedVirtual) {
         state.routerActive = options.router.sticky
@@ -163,10 +159,17 @@ export const OpenCodeClassifierPlugin: Plugin = async (
           state.routerActive = false
           delete state.lastRoutedModel
         }
+        trace("v1 router routed", {
+          sessionID: output.message.sessionID,
+          tier,
+          target: `${target.providerID}/${target.id}`,
+          routeFailed,
+        })
         return
       }
 
       state.turnModel = selected
+      trace("v1 router skipped", { sessionID: output.message.sessionID })
     },
 
     "experimental.chat.messages.transform": async (_input, output) => {
@@ -337,8 +340,6 @@ export const OpenCodeClassifierPlugin: Plugin = async (
     },
   }
 }
-
-export default OpenCodeClassifierPlugin
 
 export function installVirtualProvider(config: Config): void {
   const mutable = config as Config & {

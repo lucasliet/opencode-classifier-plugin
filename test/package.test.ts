@@ -2,11 +2,21 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 
-import plugin from "../src/index.ts"
+import entrypoint from "../index.ts"
+import { OpenCodeClassifierPlugin } from "../src/v1.ts"
 import { resolveOptions } from "../src/config.ts"
 
 test("published entrypoint exports an OpenCode 1.18 plugin function", () => {
-  assert.equal(typeof plugin, "function")
+  assert.equal(typeof OpenCodeClassifierPlugin, "function")
+})
+
+test("published entrypoint exposes a dual V1/V2 export", () => {
+  assert.equal(
+    (entrypoint as { id?: unknown }).id,
+    "opencode-classifier-plugin",
+  )
+  assert.equal(typeof (entrypoint as { server?: unknown }).server, "function")
+  assert.equal(typeof (entrypoint as { setup?: unknown }).setup, "function")
 })
 
 test("package manifest targets the classic OpenCode plugin API", async () => {
@@ -17,7 +27,7 @@ test("package manifest targets the classic OpenCode plugin API", async () => {
   assert.equal(manifest.name, "opencode-classifier-plugin")
   assert.equal(manifest.type, "module")
   assert.equal(manifest.exports["."], "./index.ts")
-  assert.equal(manifest.dependencies, undefined)
+  assert.equal(manifest.dependencies["@opencode/plugin"], "^2.0.15")
   assert.equal(manifest.devDependencies["@opencode-ai/plugin"], "1.18.32")
   assert.equal(manifest.prepublishOnly, undefined)
   assert.equal(
@@ -28,6 +38,7 @@ test("package manifest targets the classic OpenCode plugin API", async () => {
   assert.ok(manifest.files.includes("src"))
   assert.ok(manifest.files.includes("README.md"))
   assert.ok(manifest.files.includes("opencode.example.json"))
+  assert.ok(manifest.files.includes("opencode.example.jsonc"))
 })
 
 test("opencode.example.json uses the 1.18 plugin tuple shape", async () => {
@@ -54,4 +65,19 @@ test("opencode.example.json uses the 1.18 plugin tuple shape", async () => {
   assert.equal(resolved.context.maxBatches, 4)
   assert.equal(resolved.decision.model, "jev-1.13-free")
   assert.equal("integrationID" in resolved.decision, false)
+})
+
+test("opencode.example.jsonc uses the V2 plugins object shape", async () => {
+  const config = JSON.parse(
+    await readFile(new URL("../opencode.example.jsonc", import.meta.url), "utf8"),
+  )
+
+  assert.ok(Array.isArray(config.plugins))
+  assert.equal(config.plugins.length, 1)
+  assert.equal(config.plugins[0].package, "opencode-classifier-plugin")
+
+  const resolved = resolveOptions(config.plugins[0].options)
+  assert.equal(resolved.router.enabled, true)
+  assert.equal(resolved.autoMode.enabled, true)
+  assert.equal(resolved.decision.model, "jev-1.13-free")
 })
