@@ -104,7 +104,7 @@ export function resolveOptions(raw: unknown): ResolvedOptions {
       apiKey: str(decision.apiKey, ""),
       apiKeyEnv: str(decision.apiKeyEnv, "OPENCODE_API_KEY"),
       requireAuth: bool(decision.requireAuth, true),
-      timeoutMs: integer(decision.timeoutMs, 2_500, 250, 60_000),
+      timeoutMs: integer(decision.timeoutMs, 8_000, 250, 60_000),
       retries: integer(decision.retries, 1, 0, 5),
     },
     router: {

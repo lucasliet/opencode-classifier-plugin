@@ -835,6 +835,39 @@ test("Auto Mode allows safe permission requests and keeps risky requests as ask"
   )
 })
 
+test("Auto Mode preserves an explicitly allowed permission without calling Jev", async () => {
+  const mock = pluginInput()
+
+  await withFetch(
+    (async () => {
+      throw new Error("explicit host allow must not be classified")
+    }) as typeof fetch,
+    async () => {
+      const hooks = await OpenCodeClassifierPlugin(mock.input, {
+        decision: { apiKey: "test", retries: 0 },
+        router: { enabled: false },
+      })
+
+      const request = { status: "allow" as const }
+      await hooks["permission.ask"]?.(
+        {
+          id: "perm_explicit_allow",
+          type: "read",
+          pattern: ["src/**"],
+          sessionID: "ses_1",
+          messageID: "msg_1",
+          callID: "call_read",
+          title: "Read source",
+          metadata: {},
+          time: { created: Date.now() },
+        },
+        request,
+      )
+      assert.equal(request.status, "allow")
+    },
+  )
+})
+
 test("Auto Mode keeps high-risk permissions available for human approval", async () => {
   const mock = pluginInput()
 

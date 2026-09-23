@@ -219,7 +219,7 @@ If you use a local or otherwise unauthenticated System One-compatible endpoint:
     "model": "jev-1.13-free",
     "apiKeyEnv": "OPENCODE_API_KEY",
     "requireAuth": true,
-    "timeoutMs": 2500,
+    "timeoutMs": 8000,
     "retries": 1
   }
 }
@@ -296,7 +296,16 @@ The plugin classifies each request and then:
 - policy says **ask** -> does not reply, so the normal OpenCode permission UI remains in control;
 - classifier unavailable -> does not reply, so the user is asked.
 
-Before Jev evaluates a shell request, Auto Mode applies command boundaries. This mirrors Claude Code's documented precedence for explicit rules: a matching `deny` rule escalates to human approval, a matching `ask` rule keeps the host permission prompt, and Jev classifies only requests that remain. Commands that attempt critical system destruction, such as `rm -rf /`, filesystem formatting, power control, or writing directly to `/dev`, always require human approval. Auto Mode never denies: it either approves or leaves the request for the user to approve.
+An OpenCode permission configured as `allow` or `deny` is final. Auto Mode is
+only invoked for requests that resolve to `ask`; explicit effects are preserved
+without contacting Jev. Before Jev evaluates an unresolved shell request, Auto
+Mode applies command boundaries. This mirrors Claude Code's documented
+precedence for explicit rules: a matching `deny` rule escalates to human
+approval, a matching `ask` rule keeps the host permission prompt, and Jev
+classifies only requests that remain. Commands that attempt critical system
+destruction, such as `rm -rf /`, filesystem formatting, power control, or
+writing directly to `/dev`, always require human approval. Auto Mode never
+denies: it either approves or leaves the request for the user to approve.
 
 `commandRules` accepts exact command strings or a single trailing `*` prefix. For example, `git push *` matches both `git push` and `git push origin main`; it does not match `git -C repo push`. Use specific rules rather than broad shell wildcards. Only `commandRules.deny` is a final rejection; a Jev high-risk classification never prevents a human from approving the pending request.
 
@@ -351,7 +360,9 @@ Example:
 
 The external Claude Code classifier is not public, so exact model-level parity is not possible. This plugin implements its documented, observable contract through deterministic rule precedence, protected destructive commands, Jev classification, and fail-closed fallback to the normal OpenCode prompt.
 
-An OpenCode permission already configured as `allow` does not emit an event, so the plugin cannot re-review it. Configure potentially sensitive actions as `ask` if you want Jev Auto Mode to evaluate them. An explicit OpenCode `deny` is never converted to `allow`.
+Configure potentially sensitive actions as `ask` if you want Jev Auto Mode to
+evaluate them. Explicit OpenCode `allow` and `deny` effects are never converted
+to another effect.
 
 ## Agent routing
 
@@ -554,7 +565,8 @@ opencode-classifier-plugin/
   sticky workaround. A manually selected model is respected: the router only
   engages for the virtual `Auto (Jev)` model (or the global default when it
   is the virtual model and no dispatch has been observed yet).
-- Permission decisions are cached for 45 seconds per exact action+resources.
+- Permission decisions are cached for 45 seconds per exact action+resources
+  after an unresolved `ask` is classified.
 - The model router is selectable in the normal `/models` UI.
 - V1 only: OpenCode 1.18 visually restores the last real routed model after a turn; `router.sticky` keeps routing active in plugin state despite that visual limitation.
 - V1 only: selecting a different real model disables sticky routing. Re-selecting the exact same last-routed model cannot be distinguished from the TUI's automatic restoration by the public 1.18 plugin API.

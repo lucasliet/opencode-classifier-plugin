@@ -148,7 +148,7 @@ export async function setupV2(ctx: V2Context): Promise<(() => void) | void> {
   }
 
   await ctx.permission.hook("evaluate", async (event) => {
-    if (!options.autoMode.enabled) return
+    if (!options.autoMode.enabled || event.effect !== "ask") return
 
     const action = event.action
     const resources = [...event.resources]

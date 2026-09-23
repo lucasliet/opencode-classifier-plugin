@@ -210,7 +210,7 @@ export const OpenCodeClassifierPlugin: Plugin = async (
     },
 
     "permission.ask": async (input, output) => {
-      if (!options.autoMode.enabled || output.status === "deny") return
+      if (!options.autoMode.enabled || output.status !== "ask") return
 
       try {
         const metadata = options.privacy.includePermissionMetadata

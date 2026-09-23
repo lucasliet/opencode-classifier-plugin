@@ -241,6 +241,42 @@ test("v2 permission hook allows safe commands and caches the decision", async ()
   )
 })
 
+test("v2 permission hook preserves explicit host effects without calling Jev", async () => {
+  const mock = mockContext({
+    decision: { apiKey: "test", retries: 0 },
+    router: { enabled: false },
+    agents: { enabled: false },
+    context: { enabled: false },
+  })
+  let jevCalls = 0
+  await withFetch(
+    (async () => {
+      jevCalls += 1
+      return new Response(JSON.stringify(permissionResponse()), { status: 200 })
+    }) as typeof fetch,
+    async () => {
+      await setupV2(mock.ctx)
+
+      const allowed = evaluateEvent({ effect: "allow" })
+      await mock.hooks.permission[0]?.(allowed)
+      assert.equal(allowed.effect, "allow")
+      assert.equal(allowed.message, undefined)
+      assert.equal(jevCalls, 0)
+
+      const denied = evaluateEvent({ effect: "deny" })
+      await mock.hooks.permission[0]?.(denied)
+      assert.equal(denied.effect, "deny")
+      assert.equal(denied.message, undefined)
+      assert.equal(jevCalls, 0)
+
+      const unresolved = evaluateEvent()
+      await mock.hooks.permission[0]?.(unresolved)
+      assert.equal(unresolved.effect, "allow")
+      assert.equal(jevCalls, 1)
+    },
+  )
+})
+
 test("v2 permission hook keeps risky commands as ask with a reason", async () => {
   const mock = mockContext({
     decision: { apiKey: "test", retries: 0 },

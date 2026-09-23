@@ -25,6 +25,10 @@ export function decidePermission(
   options: ResolvedOptions,
   request?: PermissionRequest,
 ): PermissionDecision {
+  if (current === "allow") {
+    return { effect: "allow", reason: "OpenCode configuration allowed this action." }
+  }
+
   if (current === "deny") {
     return { effect: "deny", reason: "OpenCode configuration denied this action." }
   }
