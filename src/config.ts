@@ -60,8 +60,6 @@ export function resolveOptions(raw: unknown): ResolvedOptions {
   const agents = record(source.agents)
   const skills = record(source.skills)
   const context = record(source.context)
-  const loop = record(source.loop)
-  const verification = record(source.verification)
   const privacy = record(source.privacy)
 
   const routerEnabled = bool(router.enabled, true)
@@ -160,19 +158,6 @@ export function resolveOptions(raw: unknown): ResolvedOptions {
       maxCandidates: integer(context.maxCandidates, 24, 2, 64),
       maxBatches: integer(context.maxBatches, 4, 1, 32),
       relevantAt: num(context.relevantAt, 0.52, 0, 1),
-    },
-    loop: {
-      enabled: bool(loop.enabled, true),
-      maxRounds: integer(loop.maxRounds, 24, 2, 200),
-      maxSameFailure: integer(loop.maxSameFailure, 2, 1, 20),
-      classifySuccesses: bool(loop.classifySuccesses, true),
-      decisionAt: num(loop.decisionAt, 0.78, 0, 1),
-    },
-    verification: {
-      enabled: bool(verification.enabled, true),
-      requiredAfterMutation: bool(verification.requiredAfterMutation, true),
-      sufficientAt: num(verification.sufficientAt, 0.80, 0, 1),
-      needsMoreBelow: num(verification.needsMoreBelow, 0.30, 0, 1),
     },
     privacy: {
       maxStateChars: integer(privacy.maxStateChars, 24_000, 2_000, 200_000),

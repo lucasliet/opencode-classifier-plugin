@@ -71,21 +71,6 @@ export interface ContextOptions {
   relevantAt?: number
 }
 
-export interface LoopOptions {
-  enabled?: boolean
-  maxRounds?: number
-  maxSameFailure?: number
-  classifySuccesses?: boolean
-  decisionAt?: number
-}
-
-export interface VerificationOptions {
-  enabled?: boolean
-  requiredAfterMutation?: boolean
-  sufficientAt?: number
-  needsMoreBelow?: number
-}
-
 export interface PrivacyOptions {
   maxStateChars?: number
   maxPromptChars?: number
@@ -102,8 +87,6 @@ export interface PluginOptions {
   agents?: DomainRoutingOptions
   skills?: SkillRoutingOptions
   context?: ContextOptions
-  loop?: LoopOptions
-  verification?: VerificationOptions
   privacy?: PrivacyOptions
 }
 
@@ -141,8 +124,6 @@ export interface ResolvedOptions {
     maxSelected: number
   }
   context: Required<ContextOptions>
-  loop: Required<LoopOptions>
-  verification: Required<VerificationOptions>
   privacy: Required<PrivacyOptions>
 }
 
@@ -199,31 +180,6 @@ export interface PermissionSignals {
   privilegeEscalation: number
 }
 
-export type FailureKind =
-  | "transient"
-  | "environment"
-  | "permission"
-  | "invalid_input"
-  | "dependency"
-  | "test_failure"
-  | "code_bug"
-  | "tool_bug"
-  | "unknown"
-
-export interface FailureClassification {
-  kind: FailureKind
-  probability: number
-  retrySafe: number
-  requiresUser: number
-}
-
-export type LoopState = "work" | "retry" | "verify" | "finish" | "human"
-
-export interface LoopClassification {
-  decision: LoopState
-  probability: number
-}
-
 export interface SkillCandidate {
   name: string
   description: string
@@ -234,13 +190,6 @@ export interface SkillSelection {
   probability: number
 }
 
-export interface ToolSnapshot {
-  tool: string
-  input: unknown
-  sessionID: string
-  callID: string
-}
-
 export interface SessionRuntimeState {
   task?: string
   routerActive: boolean
@@ -249,13 +198,5 @@ export interface SessionRuntimeState {
   routedTier?: ModelTier
   routedSkills: string[]
   skillSelectionDone: boolean
-  rounds: number
-  verificationPending: boolean
-  lastFailureKey?: string
-  sameFailureCount: number
-  retryTool?: string
-  retryInputHash?: string
-  loopState: LoopState
-  loopReason?: string
   directives: string[]
 }

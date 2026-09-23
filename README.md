@@ -9,10 +9,7 @@ The plugin provides:
 - configurable fast/normal/deep model routing;
 - agent routing;
 - Jev-gated lazy skill loading without exposing the native skill catalog to the execution model;
-- large tool-output context filtering;
-- tool failure triage;
-- loop/circuit-breaker control;
-- post-mutation verification.
+- large tool-output context filtering.
 
 ## Supported OpenCode API
 
@@ -28,8 +25,6 @@ The implementation uses the classic plugin hooks that are available to the 1.18 
 config
 chat.message
 event
-tool.execute.before
-tool.execute.after
 experimental.chat.messages.transform
 experimental.chat.system.transform
 dispose
@@ -279,7 +274,7 @@ The plugin classifies each request and then:
 - policy says **ask** -> does not reply, so the normal OpenCode permission UI remains in control;
 - classifier unavailable -> does not reply, so the user is asked.
 
-Before Jev evaluates a shell request, Auto Mode applies command boundaries. This mirrors Claude Code's documented precedence for explicit rules: a matching `deny` rule wins, a matching `ask` rule keeps the host permission prompt, and Jev classifies only requests that remain. Commands that attempt critical system destruction, such as `rm -rf /`, filesystem formatting, power control, or writing directly to `/dev`, are always denied.
+Before Jev evaluates a shell request, Auto Mode applies command boundaries. This mirrors Claude Code's documented precedence for explicit rules: a matching `deny` rule escalates to human approval, a matching `ask` rule keeps the host permission prompt, and Jev classifies only requests that remain. Commands that attempt critical system destruction, such as `rm -rf /`, filesystem formatting, power control, or writing directly to `/dev`, always require human approval. Auto Mode never denies: it either approves or leaves the request for the user to approve.
 
 `commandRules` accepts exact command strings or a single trailing `*` prefix. For example, `git push *` matches both `git push` and `git push origin main`; it does not match `git -C repo push`. Use specific rules rather than broad shell wildcards. Only `commandRules.deny` is a final rejection; a Jev high-risk classification never prevents a human from approving the pending request.
 
@@ -426,138 +421,9 @@ Filtering failure preserves the original request context.
 
 A bounded in-memory cache avoids sending the same task/output combination to Jev repeatedly during the same OpenCode process.
 
-## Failure triage
+## Failure triage, loop controller, and post-action verification
 
-Tool failures are observed from OpenCode's real `message.part.updated` events when:
-
-```text
-part.type === "tool"
-part.state.status === "error"
-```
-
-Jev classifies the failure as:
-
-- `transient`;
-- `environment`;
-- `permission`;
-- `invalid_input`;
-- `dependency`;
-- `test_failure`;
-- `code_bug`;
-- `tool_bug`;
-- `unknown`.
-
-It also evaluates `retrySafe` and `requiresUser`.
-
-The public 1.18 API does not expose the internal provider retry-decision hook, so the plugin **does not override OpenCode's provider-level retry algorithm**. Failure triage instead drives the plugin's agent/tool loop state machine: transient-safe failures enter `RETRY`, user-dependent failures enter `HUMAN`, and other failures return to `WORK` for a changed approach.
-
-## Loop controller
-
-The loop controller is an explicit per-task state machine:
-
-```text
-WORK
-  ├─ transient safe failure ──> RETRY
-  ├─ mutation completed ──────> VERIFY
-  ├─ Jev says evidence enough -> FINISH
-  └─ missing user input/auth ─> HUMAN
-
-RETRY
-  ├─ successful retry ────────> WORK / Jev-selected next state
-  └─ repeated failure ────────> HUMAN
-
-VERIFY
-  ├─ sufficient validation ───> FINISH
-  ├─ failing validation ──────> WORK
-  └─ weak validation ─────────> VERIFY
-
-FINISH / HUMAN
-  └─ further tool calls are blocked
-```
-
-Configuration:
-
-```json
-{
-  "loop": {
-    "enabled": true,
-    "maxRounds": 24,
-    "maxSameFailure": 2,
-    "classifySuccesses": true,
-    "decisionAt": 0.78
-  }
-}
-```
-
-Behavior:
-
-- every permitted tool call increments the current turn's round count;
-- after a successful non-mutating tool result, Jev can choose `work`, `retry`, `verify`, `finish`, or `human`;
-- a Jev loop decision is applied only when its probability reaches `decisionAt`;
-- mutation deterministically enters `VERIFY` when post-action verification is required;
-- while in `VERIFY`, additional mutations are blocked until relevant validation resolves the state;
-- validation failure returns the controller to `WORK`;
-- sufficient validation enters `FINISH`;
-- failures classified as requiring credentials, authorization, missing information, or a product decision enter `HUMAN`;
-- a safe transient failure enters `RETRY`;
-- repeating the same failure more than `maxSameFailure` enters `HUMAN`;
-- reaching `maxRounds` enters `FINISH`.
-
-`FINISH` and `HUMAN` are enforced, not just advisory. If the model attempts another tool, `tool.execute.before` blocks the call and uses `client.session.abort({ path: { id: sessionID } })`.
-
-The public 1.18 API still does not expose OpenCode's internal provider-retry hook, so this state machine controls **agent/tool progression**, not transport/provider retries.
-
-## Post-action verification
-
-Mutation-like tool calls create a verification requirement.
-
-Built-in mutation detection covers edit/write/apply-patch/deploy-style tools. Shell commands are inspected rather than treating all shell commands as mutations.
-
-Examples considered read-only:
-
-```bash
-git status
-git diff
-git log
-rg pattern
-grep pattern file
-cat file
-ls
-pwd
-```
-
-Validation examples:
-
-```bash
-npm test
-pnpm test
-npx vitest run
-npx jest
-pytest
-tsc
-eslint .
-biome check
-cargo test
-go test ./...
-```
-
-Unknown or compound shell commands remain conservative.
-
-For example:
-
-```bash
-npm test && rm -rf dist
-```
-
-is treated as potentially mutating.
-
-A successful validation tool is evaluated against the original task using:
-
-- sufficient evidence;
-- failures present;
-- changed behavior exercised.
-
-Jev evaluates validation evidence; it does not replace the test runner.
+These features were removed. The plugin no longer observes tool results, classifies failures, maintains a per-task loop state machine, blocks tool execution, or gates mutations behind verification. It provides routing, permission Auto Mode, and context filtering only.
 
 ## Privacy
 
@@ -651,7 +517,7 @@ jev model router / Auto (Jev)
 
 ## Publishing to npm
 
-The package is not yet ready for public publication. Complete the remaining real-host smoke tests for model tiers/sticky override, agent routing, skill-catalog hiding, loop state transitions, and post-action verification before publishing.
+The package is not yet ready for public publication. Complete the remaining real-host smoke tests for model tiers/sticky override, agent routing, and skill-catalog hiding before publishing.
 
 ```bash
 npm login

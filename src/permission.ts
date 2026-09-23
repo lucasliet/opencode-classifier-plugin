@@ -119,17 +119,19 @@ function decideCommandBoundary(
 ): PermissionDecision | undefined {
   if (!isShellAction(request.action)) return undefined
 
+  // Auto Mode never denies: deterministic boundaries escalate to human approval.
   if (request.resources.some(isCriticalDestruction)) {
     return {
-      effect: "deny",
-      reason: "Auto Mode blocked a command that can destroy a critical system path.",
+      effect: "ask",
+      reason:
+        "Auto Mode requires human approval for a command that can destroy a critical system path.",
     }
   }
 
   if (matchesCommandRules(request.resources, options.autoMode.commandRules.deny)) {
     return {
-      effect: "deny",
-      reason: "Auto Mode command deny rule matched this action.",
+      effect: "ask",
+      reason: "Auto Mode command deny rule matched this action; escalated to human approval.",
     }
   }
 

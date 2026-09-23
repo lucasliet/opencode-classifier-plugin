@@ -4,7 +4,6 @@ import {
   VIRTUAL_MODEL_NAME,
   VIRTUAL_PROVIDER_ID,
   VIRTUAL_PROVIDER_NAME,
-  hashString,
   parseModelRef,
   resolveOptions,
   safeJson,
@@ -13,8 +12,6 @@ import {
 import { JevClient } from "./jev.ts"
 import {
   chooseTier,
-  classifyFailure,
-  classifyLoopProgress,
   classifyPermission,
   classifyRoute,
   classifySkills,
@@ -26,33 +23,23 @@ import {
   sanitizeSkillToolDefinition,
   stripNativeSkillCatalog,
 } from "./skills.ts"
-import { verifyEvidence } from "./verification.ts"
 import {
   createSessionState,
   eventSessionID,
-  isMutationTool,
-  isValidationTool,
   pushDirective,
-  setLoopState,
 } from "./runtime.ts"
 import type {
   ModelRef,
-  PermissionSignals,
   ResolvedOptions,
   RouteClassification,
   SessionRuntimeState,
-  ToolSnapshot,
 } from "./types.ts"
 
-export const OpenCodeClassifierPlugin: Plugin = async ({ client, serverUrl }, rawOptions) => {
+export const OpenCodeClassifierPlugin: Plugin = async ({ serverUrl }, rawOptions) => {
   const options = resolveOptions(rawOptions)
   const jev = new JevClient(options)
   const sessions = new Map<string, SessionRuntimeState>()
-  const toolCalls = new Map<string, ToolSnapshot>()
-  const permissionSignalsByCall = new Map<string, PermissionSignals>()
   const permissionRequests = new Set<string>()
-  const failedToolCalls = new Set<string>()
-  const blockedToolCalls = new Set<string>()
   const contextFilterCache = new Map<string, string | undefined>()
 
   const trace = (message: string, details: Record<string, unknown>) => {
@@ -229,26 +216,6 @@ export const OpenCodeClassifierPlugin: Plugin = async ({ client, serverUrl }, ra
         }
       }
 
-      if (
-        options.loop.enabled &&
-        state.rounds >= options.loop.maxRounds &&
-        state.loopState !== "finish" &&
-        state.loopState !== "human"
-      ) {
-        setLoopState(
-          state,
-          "finish",
-          "The configured maximum tool rounds was reached.",
-        )
-      }
-
-      const control = options.loop.enabled
-        ? loopSystemInstruction(state)
-        : state.verificationPending
-          ? "A mutation is pending verification. Before claiming completion, run a relevant test, typecheck, lint, build, or another concrete validation that exercises the changed behavior."
-          : undefined
-      if (control) output.system.push(control)
-
       if (state.routedSkills.length > 0) {
         output.system.push(
           `Jev selected the following skill(s) for this task: ${state.routedSkills.join(", ")}. Before substantive work, call the built-in skill tool with exactly the selected name(s). Do not enumerate, discover, or guess other skills.`,
@@ -269,238 +236,6 @@ export const OpenCodeClassifierPlugin: Plugin = async ({ client, serverUrl }, ra
       }
     },
 
-    "tool.execute.before": async (input, output) => {
-      const state = stateFor(input.sessionID)
-      const key = callKey(input.sessionID, input.callID)
-
-      if (
-        options.loop.enabled &&
-        state.rounds >= options.loop.maxRounds &&
-        state.loopState !== "finish" &&
-        state.loopState !== "human"
-      ) {
-        setLoopState(
-          state,
-          "finish",
-          "The configured maximum tool rounds was reached.",
-        )
-      }
-
-      if (
-        options.loop.enabled &&
-        (state.loopState === "finish" || state.loopState === "human")
-      ) {
-        blockedToolCalls.add(key)
-        await client.session
-          .abort({ path: { id: input.sessionID } })
-          .catch(() => undefined)
-        throw new Error(
-          state.loopState === "human"
-            ? "opencode-classifier-plugin loop controller: tool execution blocked because user input or authorization is required."
-            : "opencode-classifier-plugin loop controller: tool execution blocked because the task is in finish state.",
-        )
-      }
-
-      if (
-        options.loop.enabled &&
-        state.loopState === "verify" &&
-        isMutationTool(input.tool, output.args) &&
-        !isValidationTool(input.tool, output.args)
-      ) {
-        blockedToolCalls.add(key)
-        throw new Error(
-          "opencode-classifier-plugin loop controller: verification is required before another mutation.",
-        )
-      }
-
-      if (options.loop.enabled && state.loopState === "retry") {
-        const sameRetry =
-          state.retryTool === input.tool &&
-          state.retryInputHash === hashString(safeJson(output.args))
-        if (!sameRetry) {
-          setLoopState(
-            state,
-            "work",
-            "The agent chose a different action instead of the authorized retry; resume normal work.",
-          )
-        }
-      }
-
-      state.rounds += 1
-      toolCalls.set(key, {
-        tool: input.tool,
-        input: cloneValue(output.args),
-        sessionID: input.sessionID,
-        callID: input.callID,
-      })
-    },
-
-    "tool.execute.after": async (input, output) => {
-      const key = callKey(input.sessionID, input.callID)
-      const snapshot = toolCalls.get(key)
-      const permissionSignals = permissionSignalsByCall.get(key)
-      const state = stateFor(input.sessionID)
-      const args = snapshot?.input ?? input.args
-      const mutated = didMutate(input.tool, args, permissionSignals)
-      const validation = isValidationTool(input.tool, args)
-
-      toolCalls.delete(key)
-      permissionSignalsByCall.delete(key)
-      failedToolCalls.delete(key)
-      blockedToolCalls.delete(key)
-
-      if (
-        options.verification.enabled &&
-        options.verification.requiredAfterMutation &&
-        mutated
-      ) {
-        state.verificationPending = true
-        if (options.loop.enabled) {
-          setLoopState(
-            state,
-            "verify",
-            "A state-changing action completed and requires concrete validation.",
-          )
-        }
-      }
-
-      if (
-        options.verification.enabled &&
-        (state.verificationPending || state.loopState === "verify") &&
-        state.task &&
-        validation
-      ) {
-        const evidence = truncate(
-          output.output,
-          options.privacy.maxEvidenceChars,
-        )
-
-        try {
-          const verification = await verifyEvidence(
-            jev,
-            options,
-            state.task,
-            evidence,
-          )
-
-          if (
-            verification.sufficient >= options.verification.sufficientAt &&
-            verification.failuresPresent < 0.35 &&
-            verification.behaviorExercised >= 0.55
-          ) {
-            state.verificationPending = false
-            if (options.loop.enabled) {
-              setLoopState(
-                state,
-                "finish",
-                "Relevant validation evidence is sufficient and no unresolved failure is present.",
-              )
-            } else {
-              pushDirective(
-                state,
-                "Validation evidence is sufficient. Finish the task if no other work remains.",
-              )
-            }
-          } else if (verification.failuresPresent >= 0.5) {
-            if (options.loop.enabled) {
-              setLoopState(
-                state,
-                "work",
-                "Validation found unresolved failures that require additional work.",
-              )
-            } else {
-              pushDirective(
-                state,
-                "Validation found unresolved failures. Fix them before claiming completion.",
-              )
-            }
-          } else {
-            const reason =
-              verification.sufficient <= options.verification.needsMoreBelow
-                ? "Validation evidence is too weak or unrelated; run a more relevant check."
-                : "More validation evidence is required before completion."
-            if (options.loop.enabled) {
-              setLoopState(state, "verify", reason)
-            } else {
-              pushDirective(state, reason)
-            }
-          }
-        } catch {
-          if (options.loop.enabled) {
-            setLoopState(
-              state,
-              "verify",
-              "Verification classification was unavailable; obtain concrete validation before completion.",
-            )
-          } else {
-            pushDirective(
-              state,
-              "Verification classification was unavailable. Use concrete test/build/typecheck evidence before claiming completion.",
-            )
-          }
-        }
-        return
-      }
-
-      if (mutated) return
-
-      if (
-        options.loop.enabled &&
-        options.loop.classifySuccesses &&
-        state.task &&
-        input.tool !== "skill"
-      ) {
-        try {
-          const progress = await classifyLoopProgress(jev, options, {
-            task: state.task,
-            tool: input.tool,
-            evidence: output.output,
-            round: state.rounds,
-            verificationPending: state.verificationPending,
-          })
-
-          if (progress.probability >= options.loop.decisionAt) {
-            let next = progress.decision
-            if (!options.verification.enabled && next === "verify") {
-              next = "work"
-            }
-            if (state.verificationPending && next === "finish") {
-              next = "verify"
-            }
-            setLoopState(
-              state,
-              next,
-              `Jev selected the next loop state "${next}" with probability ${progress.probability.toFixed(2)}.`,
-            )
-            if (next === "retry") {
-              state.retryTool = input.tool
-              state.retryInputHash = hashString(safeJson(args))
-            }
-          } else if (state.loopState === "retry") {
-            setLoopState(
-              state,
-              "work",
-              "The retry completed; continue normal task execution.",
-            )
-          }
-        } catch {
-          if (state.loopState === "retry") {
-            setLoopState(
-              state,
-              "work",
-              "The retry completed; continue normal task execution.",
-            )
-          }
-        }
-      } else if (state.loopState === "retry") {
-        setLoopState(
-          state,
-          "work",
-          "The retry completed; continue normal task execution.",
-        )
-      }
-    },
-
     "permission.ask": async (input, output) => {
       if (!options.autoMode.enabled || output.status === "deny") return
 
@@ -514,13 +249,6 @@ export const OpenCodeClassifierPlugin: Plugin = async ({ client, serverUrl }, ra
           ...(metadata ? { metadata } : {}),
         }
         const signals = await classifyPermission(jev, options, request)
-
-        if (input.callID) {
-          permissionSignalsByCall.set(
-            callKey(input.sessionID, input.callID),
-            signals,
-          )
-        }
 
         const decision = decidePermission(output.status, signals, options, request)
         if (decision.effect === "allow") output.status = "allow"
@@ -543,7 +271,6 @@ export const OpenCodeClassifierPlugin: Plugin = async ({ client, serverUrl }, ra
 
         permissionRequests.add(requestID)
         const v2 = type === "permission.v2.asked"
-        const source = v2 ? record(properties.source) : record(properties.tool)
         trace("permission request received", {
           requestID,
           sessionID,
@@ -562,10 +289,6 @@ export const OpenCodeClassifierPlugin: Plugin = async ({ client, serverUrl }, ra
             ...(metadata ? { metadata } : {}),
           }
           const signals = await classifyPermission(jev, options, request)
-          const callID = stringValue(source.callID)
-          if (callID) {
-            permissionSignalsByCall.set(callKey(sessionID, callID), signals)
-          }
 
           const decision = decidePermission("ask", signals, options, request)
           trace("permission policy evaluated", {
@@ -593,113 +316,11 @@ export const OpenCodeClassifierPlugin: Plugin = async ({ client, serverUrl }, ra
         return
       }
 
-      if (type === "message.part.updated") {
-        const part = record(properties.part)
-        if (part.type !== "tool") return
-
-        const stateData = record(part.state)
-        if (stateData.status !== "error") return
-
-        const sessionID =
-          stringValue(part.sessionID) ??
-          stringValue(properties.sessionID)
-        const callID = stringValue(part.callID)
-        const tool = stringValue(part.tool) ?? "unknown"
-        if (!sessionID || !callID) return
-
-        const key = callKey(sessionID, callID)
-
-        if (blockedToolCalls.has(key)) {
-          blockedToolCalls.delete(key)
-          toolCalls.delete(key)
-          permissionSignalsByCall.delete(key)
-          return
-        }
-
-        if (failedToolCalls.has(key)) return
-        failedToolCalls.add(key)
-
-        const state = stateFor(sessionID)
-        const snapshot = toolCalls.get(key)
-        const args = snapshot?.input ?? stateData.input
-        const permissionSignals = permissionSignalsByCall.get(key)
-
-        if (
-          options.verification.enabled &&
-          options.verification.requiredAfterMutation &&
-          didMutate(tool, args, permissionSignals)
-        ) {
-          state.verificationPending = true
-        }
-
-        toolCalls.delete(key)
-        permissionSignalsByCall.delete(key)
-
-        if (options.loop.enabled) {
-          const error = stringValue(stateData.error) ?? safeJson(stateData.error)
-          const evidence = truncate(error, options.privacy.maxEvidenceChars)
-          const failureKey = hashString(`${tool}:${evidence}`)
-
-          if (state.lastFailureKey === failureKey) state.sameFailureCount += 1
-          else {
-            state.lastFailureKey = failureKey
-            state.sameFailureCount = 1
-          }
-
-          try {
-            const failure = await classifyFailure(jev, options, evidence, tool)
-            if (failure.requiresUser >= 0.75) {
-              setLoopState(
-                state,
-                "human",
-                "The latest failure requires user authorization, credentials, missing information, or a product decision.",
-              )
-            } else if (
-              failure.kind === "transient" &&
-              failure.retrySafe >= 0.75 &&
-              state.sameFailureCount <= options.loop.maxSameFailure
-            ) {
-              setLoopState(
-                state,
-                "retry",
-                "The latest failure appears transient and safe to retry once.",
-              )
-              state.retryTool = tool
-              state.retryInputHash = hashString(safeJson(args))
-            } else {
-              setLoopState(
-                state,
-                "work",
-                `The latest failure was classified as ${failure.kind}; change approach or fix the underlying problem.`,
-              )
-            }
-          } catch {
-            setLoopState(
-              state,
-              "work",
-              "Failure classification was unavailable; inspect the failure and change approach conservatively.",
-            )
-          }
-
-          if (state.sameFailureCount > options.loop.maxSameFailure) {
-            setLoopState(
-              state,
-              "human",
-              "The same failure repeated beyond the configured limit; stop retrying and report the blocker to the user.",
-            )
-          }
-        }
-        return
-      }
-
       if (type === "session.deleted") {
         const sessionID = eventSessionID(event)
         if (!sessionID) return
         sessions.delete(sessionID)
-        clearSessionMap(toolCalls, sessionID)
-        clearSessionMap(permissionSignalsByCall, sessionID)
-        clearSessionSet(failedToolCalls, sessionID)
-        clearSessionSet(blockedToolCalls, sessionID)
+        clearSessionMap(contextFilterCache, sessionID)
         return
       }
 
@@ -710,20 +331,13 @@ export const OpenCodeClassifierPlugin: Plugin = async ({ client, serverUrl }, ra
       ) {
         const sessionID = eventSessionID(event)
         if (!sessionID) return
-        clearSessionMap(toolCalls, sessionID)
-        clearSessionMap(permissionSignalsByCall, sessionID)
-        clearSessionSet(failedToolCalls, sessionID)
-        clearSessionSet(blockedToolCalls, sessionID)
+        clearSessionMap(contextFilterCache, sessionID)
       }
     },
 
     dispose: async () => {
       sessions.clear()
-      toolCalls.clear()
-      permissionSignalsByCall.clear()
       permissionRequests.clear()
-      failedToolCalls.clear()
-      blockedToolCalls.clear()
       contextFilterCache.clear()
     },
   }
@@ -763,14 +377,9 @@ export function installVirtualProvider(config: Config): void {
 function resetTurnState(state: SessionRuntimeState): void {
   state.routedSkills = []
   state.skillSelectionDone = false
-  state.rounds = 0
-  state.verificationPending = false
-  state.sameFailureCount = 0
-  setLoopState(state, "work")
   state.directives = []
   delete state.routedTier
   delete state.turnModel
-  delete state.lastFailureKey
 }
 
 function extractPromptText(parts: unknown[], maxChars: number): string {
@@ -819,83 +428,10 @@ function classicModelMatches(model: unknown, target: ModelRef): boolean {
   )
 }
 
-function didMutate(
-  tool: string,
-  input: unknown,
-  signals?: PermissionSignals,
-): boolean {
-  if (signals) {
-    if (
-      signals.modifiesProjectFiles >= 0.55 ||
-      signals.outsideWorkspace >= 0.55 ||
-      signals.destructive >= 0.55 ||
-      signals.changesVcsHistory >= 0.55 ||
-      signals.externalSideEffect >= 0.55
-    ) {
-      return true
-    }
-
-    if (
-      signals.readOnly >= 0.9 &&
-      signals.modifiesProjectFiles <= 0.2 &&
-      signals.outsideWorkspace <= 0.2 &&
-      signals.destructive <= 0.2 &&
-      signals.changesVcsHistory <= 0.2 &&
-      signals.externalSideEffect <= 0.2
-    ) {
-      return false
-    }
-  }
-
-  return isMutationTool(tool, input)
-}
-
-function loopSystemInstruction(state: SessionRuntimeState): string | undefined {
-  const reason = state.loopReason ? ` Reason: ${state.loopReason}` : ""
-
-  switch (state.loopState) {
-    case "retry":
-      return `Loop controller state RETRY: retry the latest transient/safe action at most once, then reassess instead of repeating blindly.${reason}`
-    case "verify":
-      return `Loop controller state VERIFY: obtain concrete validation before completion. Prefer tests, typecheck, lint, build, or another check that exercises the changed behavior. Avoid new mutations until verification resolves.${reason}`
-    case "finish":
-      return `Loop controller state FINISH: do not call additional tools. Produce the final response now, stating completed work, validation evidence, and any remaining limitation.${reason}`
-    case "human":
-      return `Loop controller state HUMAN: do not call additional tools. Ask the user for the missing authorization, information, credential, or decision and explain the blocker precisely.${reason}`
-    case "work":
-      return state.verificationPending
-        ? `Loop controller state WORK: continue fixing or investigating, but completion remains blocked until pending mutation verification succeeds.${reason}`
-        : undefined
-  }
-}
-
-function callKey(sessionID: string, callID: string): string {
-  return `${sessionID}:${callID}`
-}
-
 function clearSessionMap<T>(map: Map<string, T>, sessionID: string): void {
   const prefix = `${sessionID}:`
   for (const key of map.keys()) {
     if (key.startsWith(prefix)) map.delete(key)
-  }
-}
-
-function clearSessionSet(set: Set<string>, sessionID: string): void {
-  const prefix = `${sessionID}:`
-  for (const key of set) {
-    if (key.startsWith(prefix)) set.delete(key)
-  }
-}
-
-function cloneValue<T>(value: T): T {
-  try {
-    return structuredClone(value)
-  } catch {
-    try {
-      return JSON.parse(JSON.stringify(value)) as T
-    } catch {
-      return value
-    }
   }
 }
 

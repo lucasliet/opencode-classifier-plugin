@@ -14,11 +14,7 @@ import {
   installVirtualProvider,
 } from "../src/index.ts"
 import { decidePermission } from "../src/permission.ts"
-import {
-  eventSessionID,
-  isMutationTool,
-  isValidationTool,
-} from "../src/runtime.ts"
+import { eventSessionID } from "../src/runtime.ts"
 
 function options(extra: Record<string, unknown> = {}) {
   return resolveOptions({
@@ -102,30 +98,6 @@ function permissionResponse(overrides: Record<string, number> = {}) {
   }
 }
 
-function failureResponse(kind = "code_bug") {
-  return {
-    answers: {
-      kind: {
-        type: "choice",
-        choice: kind,
-        probabilities: { [kind]: 0.95 },
-      },
-      retry_safe: { type: "noul", noul: kind === "transient" ? 0.9 : 0.1 },
-      requires_user: { type: "noul", noul: 0.1 },
-    },
-  }
-}
-
-function verificationResponse() {
-  return {
-    answers: {
-      sufficient: { type: "noul", noul: 0.95 },
-      failures_present: { type: "noul", noul: 0.05 },
-      behavior_exercised: { type: "noul", noul: 0.9 },
-    },
-  }
-}
-
 function skillResponse(scores: number[]) {
   return {
     answers: Object.fromEntries(
@@ -137,34 +109,12 @@ function skillResponse(scores: number[]) {
   }
 }
 
-function loopResponse(
-  decision: "work" | "retry" | "verify" | "finish" | "human",
-  probability = 0.95,
-) {
-  return {
-    answers: {
-      next_state: {
-        type: "choice",
-        choice: decision,
-        probabilities: { [decision]: probability },
-      },
-    },
-  }
-}
-
 function pluginInput() {
-  const aborts: unknown[] = []
   const permissionReplies: unknown[] = []
   const client = {
     permission: {
       async reply(input: unknown) {
         permissionReplies.push(input)
-        return {}
-      },
-    },
-    session: {
-      async abort(input: unknown) {
-        aborts.push(input)
         return {}
       },
     },
@@ -180,7 +130,6 @@ function pluginInput() {
       serverUrl: new URL("http://localhost:4096"),
       $: {},
     } as any,
-    aborts,
     permissionReplies,
   }
 }
@@ -345,7 +294,7 @@ test("permission policy escalates outside-workspace and VCS-history risk", () =>
   )
 })
 
-test("permission policy applies command deny rules before Jev signals", () => {
+test("permission policy escalates command deny rules to ask instead of denying", () => {
   // Given
   const configured = resolveOptions({
     router: {
@@ -370,7 +319,7 @@ test("permission policy applies command deny rules before Jev signals", () => {
   })
 
   // Then
-  assert.equal(decision.effect, "deny")
+  assert.equal(decision.effect, "ask")
 })
 
 test("permission policy keeps explicit command ask rules as user checkpoints", () => {
@@ -400,7 +349,7 @@ test("permission policy keeps explicit command ask rules as user checkpoints", (
   assert.equal(decision.effect, "ask")
 })
 
-test("permission policy denies commands that destroy critical system paths", () => {
+test("permission policy escalates critical destruction to ask instead of denying", () => {
   // Given
   const configured = options()
 
@@ -411,7 +360,7 @@ test("permission policy denies commands that destroy critical system paths", () 
   })
 
   // Then
-  assert.equal(decision.effect, "deny")
+  assert.equal(decision.effect, "ask")
 })
 
 test("permission metadata is omitted by default and opt-in when configured", async () => {
@@ -464,15 +413,6 @@ test("runtime recognizes classic event session IDs", () => {
     }),
     "tool-session",
   )
-})
-
-test("shell mutation and validation detection is conservative", () => {
-  assert.equal(isMutationTool("bash", { command: "git status --short" }), false)
-  assert.equal(isMutationTool("bash", { command: "npm test" }), false)
-  assert.equal(isMutationTool("bash", { command: "npm test && rm -rf dist" }), true)
-  assert.equal(isMutationTool("bash", { command: "rm -rf dist" }), true)
-  assert.equal(isValidationTool("bash", { command: "npx vitest run" }), true)
-  assert.equal(isValidationTool("bash", { command: "npx jest --runInBand" }), true)
 })
 
 test("System One retries a timed-out attempt with a fresh signal", async () => {
@@ -1118,298 +1058,4 @@ test("Auto Mode does not reject a high-risk host permission event", async () => 
       assert.deepEqual(replies, [])
     },
   )
-})
-
-test("mutation creates verification gate and successful validation clears it", async () => {
-  const mock = pluginInput()
-
-  await withFetch(
-    (async () =>
-      new Response(JSON.stringify(verificationResponse()), {
-        status: 200,
-      })) as typeof fetch,
-    async () => {
-      const hooks = await OpenCodeClassifierPlugin(mock.input, {
-        decision: { apiKey: "test", retries: 0 },
-        router: { enabled: false },
-        autoMode: { enabled: false },
-      })
-
-      const output = userOutput("opencode-go", "gpt-5.6-luna")
-      await hooks["chat.message"]?.({ sessionID: "ses_1" } as any, output)
-
-      await hooks["tool.execute.before"]?.(
-        { tool: "edit", sessionID: "ses_1", callID: "call_edit" },
-        { args: { filePath: "src/a.ts" } },
-      )
-      await hooks["tool.execute.after"]?.(
-        {
-          tool: "edit",
-          sessionID: "ses_1",
-          callID: "call_edit",
-          args: { filePath: "src/a.ts" },
-        },
-        { title: "edit", output: "done", metadata: {} },
-      )
-
-      const pending = { system: [] as string[] }
-      await hooks["experimental.chat.system.transform"]?.(
-        {
-          sessionID: "ses_1",
-          model: { providerID: "opencode-go", id: "gpt-5.6-luna" },
-        } as any,
-        pending,
-      )
-      assert.match(pending.system.join("\n"), /Loop controller state VERIFY/)
-
-      await assert.rejects(
-        () =>
-          hooks["tool.execute.before"]!(
-            { tool: "edit", sessionID: "ses_1", callID: "call_edit_2" },
-            { args: { filePath: "src/b.ts" } },
-          ),
-        /verification is required/,
-      )
-
-      await hooks["tool.execute.before"]?.(
-        { tool: "bash", sessionID: "ses_1", callID: "call_test" },
-        { args: { command: "npm test" } },
-      )
-      await hooks["tool.execute.after"]?.(
-        {
-          tool: "bash",
-          sessionID: "ses_1",
-          callID: "call_test",
-          args: { command: "npm test" },
-        },
-        { title: "test", output: "all tests pass", metadata: {} },
-      )
-
-      const verified = { system: [] as string[] }
-      await hooks["experimental.chat.system.transform"]?.(
-        {
-          sessionID: "ses_1",
-          model: { providerID: "opencode-go", id: "gpt-5.6-luna" },
-        } as any,
-        verified,
-      )
-      assert.doesNotMatch(verified.system.join("\n"), /Loop controller state VERIFY/)
-      assert.match(verified.system.join("\n"), /Loop controller state FINISH/)
-      assert.match(verified.system.join("\n"), /validation evidence is sufficient/i)
-    },
-  )
-})
-
-test("successful tool evidence can transition loop state from WORK to FINISH", async () => {
-  const mock = pluginInput()
-
-  await withFetch(
-    (async () =>
-      new Response(JSON.stringify(loopResponse("finish")), {
-        status: 200,
-      })) as typeof fetch,
-    async () => {
-      const hooks = await OpenCodeClassifierPlugin(mock.input, {
-        decision: { apiKey: "test", retries: 0 },
-        router: { enabled: false },
-        autoMode: { enabled: false },
-        loop: {
-          enabled: true,
-          classifySuccesses: true,
-          decisionAt: 0.78,
-          maxRounds: 10,
-        },
-      })
-
-      const output = userOutput("opencode-go", "gpt-5.6-luna")
-      await hooks["chat.message"]?.({ sessionID: "ses_1" } as any, output)
-
-      await hooks["tool.execute.before"]?.(
-        { tool: "read", sessionID: "ses_1", callID: "call_read" },
-        { args: { filePath: "src/a.ts" } },
-      )
-      await hooks["tool.execute.after"]?.(
-        {
-          tool: "read",
-          sessionID: "ses_1",
-          callID: "call_read",
-          args: { filePath: "src/a.ts" },
-        },
-        {
-          title: "read",
-          output: "The requested fact is fully established by this file.",
-          metadata: {},
-        },
-      )
-
-      const system = { system: [] as string[] }
-      await hooks["experimental.chat.system.transform"]?.(
-        {
-          sessionID: "ses_1",
-          model: { providerID: "opencode-go", id: "gpt-5.6-luna" },
-        } as any,
-        system,
-      )
-
-      assert.match(system.system.join("\n"), /Loop controller state FINISH/)
-      assert.match(system.system.join("\n"), /probability 0\.95/)
-    },
-  )
-})
-
-test("transient safe failure transitions loop state to RETRY", async () => {
-  const mock = pluginInput()
-
-  await withFetch(
-    (async () =>
-      new Response(JSON.stringify(failureResponse("transient")), {
-        status: 200,
-      })) as typeof fetch,
-    async () => {
-      const hooks = await OpenCodeClassifierPlugin(mock.input, {
-        decision: { apiKey: "test", retries: 0 },
-        router: { enabled: false },
-        autoMode: { enabled: false },
-        loop: { maxSameFailure: 2, maxRounds: 10 },
-      })
-
-      const output = userOutput("opencode-go", "gpt-5.6-luna")
-      await hooks["chat.message"]?.({ sessionID: "ses_1" } as any, output)
-
-      await hooks["tool.execute.before"]?.(
-        { tool: "read", sessionID: "ses_1", callID: "call_retry" },
-        { args: { filePath: "src/a.ts" } },
-      )
-      await hooks.event?.({
-        event: {
-          type: "message.part.updated",
-          properties: {
-            part: {
-              type: "tool",
-              sessionID: "ses_1",
-              callID: "call_retry",
-              tool: "read",
-              state: {
-                status: "error",
-                input: { filePath: "src/a.ts" },
-                error: "temporary network failure",
-              },
-            },
-          },
-        },
-      } as any)
-
-      const system = { system: [] as string[] }
-      await hooks["experimental.chat.system.transform"]?.(
-        {
-          sessionID: "ses_1",
-          model: { providerID: "opencode-go", id: "gpt-5.6-luna" },
-        } as any,
-        system,
-      )
-      assert.match(system.system.join("\n"), /Loop controller state RETRY/)
-    },
-  )
-})
-
-test("repeated tool failures trip the 1.18 circuit breaker", async () => {
-  const mock = pluginInput()
-
-  await withFetch(
-    (async () =>
-      new Response(JSON.stringify(failureResponse()), {
-        status: 200,
-      })) as typeof fetch,
-    async () => {
-      const hooks = await OpenCodeClassifierPlugin(mock.input, {
-        decision: { apiKey: "test", retries: 0 },
-        router: { enabled: false },
-        autoMode: { enabled: false },
-        loop: { maxSameFailure: 1, maxRounds: 10 },
-      })
-
-      const output = userOutput("opencode-go", "gpt-5.6-luna")
-      await hooks["chat.message"]?.({ sessionID: "ses_1" } as any, output)
-
-      for (const callID of ["call_1", "call_2"]) {
-        await hooks["tool.execute.before"]?.(
-          { tool: "edit", sessionID: "ses_1", callID },
-          { args: { filePath: "src/a.ts" } },
-        )
-        await hooks.event?.({
-          event: {
-            type: "message.part.updated",
-            properties: {
-              part: {
-                type: "tool",
-                sessionID: "ses_1",
-                callID,
-                tool: "edit",
-                state: {
-                  status: "error",
-                  input: { filePath: "src/a.ts" },
-                  error: "same failure",
-                },
-              },
-            },
-          },
-        } as any)
-      }
-
-      const system = { system: [] as string[] }
-      await hooks["experimental.chat.system.transform"]?.(
-        {
-          sessionID: "ses_1",
-          model: { providerID: "opencode-go", id: "gpt-5.6-luna" },
-        } as any,
-        system,
-      )
-      assert.match(system.system.join("\n"), /Loop controller state HUMAN/)
-      assert.match(system.system.join("\n"), /same failure repeated/i)
-    },
-  )
-})
-
-test("maxRounds blocks further tools and aborts the session", async () => {
-  const mock = pluginInput()
-  const hooks = await OpenCodeClassifierPlugin(mock.input, {
-    router: { enabled: false },
-    autoMode: { enabled: false },
-    loop: { maxRounds: 2 },
-  })
-
-  const output = userOutput("opencode-go", "gpt-5.6-luna")
-  await hooks["chat.message"]?.({ sessionID: "ses_1" } as any, output)
-
-  for (const callID of ["call_1", "call_2"]) {
-    await hooks["tool.execute.before"]?.(
-      { tool: "read", sessionID: "ses_1", callID },
-      { args: { filePath: "x" } },
-    )
-    await hooks["tool.execute.after"]?.(
-      { tool: "read", sessionID: "ses_1", callID, args: { filePath: "x" } },
-      { title: "read", output: "ok", metadata: {} },
-    )
-  }
-
-  const system = { system: [] as string[] }
-  await hooks["experimental.chat.system.transform"]?.(
-    {
-      sessionID: "ses_1",
-      model: { providerID: "opencode-go", id: "gpt-5.6-luna" },
-    } as any,
-    system,
-  )
-  assert.match(system.system.join("\n"), /Loop controller state FINISH/)
-  assert.match(system.system.join("\n"), /maximum tool rounds/i)
-
-  await assert.rejects(
-    () =>
-      hooks["tool.execute.before"]!(
-        { tool: "read", sessionID: "ses_1", callID: "call_3" },
-        { args: { filePath: "x" } },
-      ),
-    /finish state/,
-  )
-  assert.deepEqual(mock.aborts, [{ path: { id: "ses_1" } }])
 })

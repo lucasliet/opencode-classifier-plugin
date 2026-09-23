@@ -80,19 +80,6 @@
           "maxBatches": 4,
           "relevantAt": 0.52
         },
-        "loop": {
-          "enabled": true,
-          "maxRounds": 24,
-          "maxSameFailure": 2,
-          "classifySuccesses": true,
-          "decisionAt": 0.78
-        },
-        "verification": {
-          "enabled": true,
-          "requiredAfterMutation": true,
-          "sufficientAt": 0.8,
-          "needsMoreBelow": 0.3
-        },
         "privacy": {
           "maxStateChars": 24000,
           "maxPromptChars": 8000,

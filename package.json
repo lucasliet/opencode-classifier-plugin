@@ -1,7 +1,7 @@
 {
   "name": "opencode-classifier-plugin",
   "version": "0.1.0",
-  "description": "Jev-powered Auto Mode, selectable model router, agent/skill routing, context filtering, failure triage, loop control, and verification for OpenCode 1.18.x.",
+  "description": "Jev-powered Auto Mode, selectable model router, agent/skill routing, and context filtering for OpenCode 1.18.x.",
   "type": "module",
   "license": "MIT",
   "exports": {

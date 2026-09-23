@@ -1,7 +1,5 @@
 import type {
-  FailureClassification,
   JevQuestion,
-  LoopClassification,
   PermissionSignals,
   ResolvedOptions,
   RouteClassification,
@@ -190,66 +188,6 @@ export async function classifyPermission(
   }
 }
 
-export async function classifyFailure(
-  jev: JevClient,
-  options: ResolvedOptions,
-  error: unknown,
-  tool?: string,
-): Promise<FailureClassification> {
-  const response = await jev.ask(
-    {
-      tool,
-      failure: truncate(safeJson(error), options.privacy.maxEvidenceChars),
-    },
-    {
-      kind: {
-        type: "choice",
-        instructions: "Classify the most likely primary cause of this coding-agent tool failure.",
-        criteria: {
-          transient: "Temporary network, service, rate limit, lock, or timing problem; retry may work unchanged.",
-          environment: "Environment, platform, missing executable, unavailable service, or machine configuration issue.",
-          permission: "Authorization, authentication, filesystem permission, policy, or elevated-access issue.",
-          invalid_input: "The tool was called with invalid arguments, malformed input, or a bad command.",
-          dependency: "A package, module, dependency, or version is missing or incompatible.",
-          test_failure: "A test ran successfully but reported an assertion or behavioral failure.",
-          code_bug: "The project code itself appears to contain the defect exposed by the tool.",
-          tool_bug: "The tool or integration appears broken independently of the project.",
-          unknown: "Evidence is insufficient for another class.",
-        },
-      },
-      retry_safe: {
-        type: "noul",
-        instructions: "Is retrying the same action unchanged likely to be safe and useful?",
-      },
-      requires_user: {
-        type: "noul",
-        instructions: "Does resolving this failure likely require user authorization, credentials, a product decision, or information unavailable to the coding agent?",
-      },
-    },
-  )
-
-  const result = choice(response, "kind")
-  const kinds = new Set([
-    "transient",
-    "environment",
-    "permission",
-    "invalid_input",
-    "dependency",
-    "test_failure",
-    "code_bug",
-    "tool_bug",
-    "unknown",
-  ])
-  const kind = result.value && kinds.has(result.value) ? result.value : "unknown"
-
-  return {
-    kind: kind as FailureClassification["kind"],
-    probability: result.probability,
-    retrySafe: noul(response, "retry_safe"),
-    requiresUser: noul(response, "requires_user"),
-  }
-}
-
 export async function classifySkills(
   jev: JevClient,
   options: ResolvedOptions,
@@ -299,52 +237,4 @@ export async function classifySkills(
     .filter((item) => item.probability >= options.skills.minimumProbability)
     .sort((a, b) => b.probability - a.probability)
     .slice(0, options.skills.maxSelected)
-}
-
-export async function classifyLoopProgress(
-  jev: JevClient,
-  options: ResolvedOptions,
-  input: {
-    task: string
-    tool: string
-    evidence: string
-    round: number
-    verificationPending: boolean
-  },
-): Promise<LoopClassification> {
-  const response = await jev.ask(
-    {
-      task: truncate(input.task, options.privacy.maxPromptChars),
-      latest_tool: input.tool,
-      latest_evidence: truncate(input.evidence, options.privacy.maxEvidenceChars),
-      round: input.round,
-      verification_pending: input.verificationPending,
-      instruction:
-        "Choose the next coding-agent control state. Do not solve the task. Be conservative about finish and human.",
-    },
-    {
-      next_state: {
-        type: "choice",
-        instructions:
-          "Choose the next controller state after this successful tool result.",
-        criteria: {
-          work: "More substantive tool work, investigation, or implementation is still needed.",
-          retry: "The latest action should be repeated because the result is incomplete or transient.",
-          verify: "Concrete validation should happen before more implementation or completion.",
-          finish: "The available evidence is sufficient to answer the user's task without more tool calls.",
-          human: "Progress requires user authorization, missing information, or a product decision unavailable to the agent.",
-        },
-      },
-    },
-  )
-
-  const result = choice(response, "next_state")
-  const allowed = new Set(["work", "retry", "verify", "finish", "human"])
-  return {
-    decision:
-      result.value && allowed.has(result.value)
-        ? (result.value as LoopClassification["decision"])
-        : "work",
-    probability: result.probability,
-  }
 }

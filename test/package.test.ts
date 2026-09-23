@@ -54,8 +54,6 @@ test("opencode.example.json uses the 1.18 plugin tuple shape", async () => {
   assert.equal(resolved.context.maxBatches, 4)
   assert.equal(resolved.skills.enabled, true)
   assert.equal(resolved.skills.maxSelected, 1)
-  assert.equal(resolved.loop.classifySuccesses, true)
-  assert.equal(resolved.loop.decisionAt, 0.78)
   assert.equal(resolved.decision.model, "jev-1.13-free")
   assert.equal("integrationID" in resolved.decision, false)
 })

@@ -10,6 +10,11 @@
 > Before starting this migration, verify the API against the **installed
 > OpenCode binary and its published plugin package/types**. Do not migrate based
 > only on unreleased source code or internal V2 specs.
+>
+> > **Historical note:** the loop controller, failure triage, and post-action
+> > verification were removed from the 1.18 implementation. The V2 sections
+> > describing them (§13 use cases 5–6, §14, and related phases/checklist
+> > items) are preserved as design reference only.
 
 ## 1. Goal
 
