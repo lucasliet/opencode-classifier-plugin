@@ -508,11 +508,12 @@ export const OpenCodeClassifierPlugin: Plugin = async ({ client, serverUrl }, ra
         const metadata = options.privacy.includePermissionMetadata
           ? input.metadata
           : undefined
-        const signals = await classifyPermission(jev, options, {
+        const request = {
           action: input.type,
           resources: stringList(input.pattern),
           ...(metadata ? { metadata } : {}),
-        })
+        }
+        const signals = await classifyPermission(jev, options, request)
 
         if (input.callID) {
           permissionSignalsByCall.set(
@@ -521,7 +522,7 @@ export const OpenCodeClassifierPlugin: Plugin = async ({ client, serverUrl }, ra
           )
         }
 
-        const decision = decidePermission(output.status, signals, options)
+        const decision = decidePermission(output.status, signals, options, request)
         if (decision.effect === "allow") output.status = "allow"
         if (decision.effect === "deny") output.status = "deny"
       } catch {
@@ -553,20 +554,20 @@ export const OpenCodeClassifierPlugin: Plugin = async ({ client, serverUrl }, ra
           const metadata = options.privacy.includePermissionMetadata
             ? record(properties.metadata)
             : undefined
-          const signals = await classifyPermission(jev, options, {
-            action:
-              (v2
-                ? stringValue(properties.action)
-                : stringValue(properties.permission)) ?? "unknown",
+          const request = {
+            action: (v2
+              ? stringValue(properties.action)
+              : stringValue(properties.permission)) ?? "unknown",
             resources: stringList(v2 ? properties.resources : properties.patterns),
             ...(metadata ? { metadata } : {}),
-          })
+          }
+          const signals = await classifyPermission(jev, options, request)
           const callID = stringValue(source.callID)
           if (callID) {
             permissionSignalsByCall.set(callKey(sessionID, callID), signals)
           }
 
-          const decision = decidePermission("ask", signals, options)
+          const decision = decidePermission("ask", signals, options, request)
           trace("permission policy evaluated", {
             requestID,
             effect: decision.effect,

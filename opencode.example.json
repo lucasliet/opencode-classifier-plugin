@@ -36,6 +36,15 @@
         "autoMode": {
           "enabled": true,
           "onError": "ask",
+          "commandRules": {
+            "ask": [
+              "git push *",
+              "npm publish"
+            ],
+            "deny": [
+              "git push --force *"
+            ]
+          },
           "allowReversibleProjectChanges": true,
           "denyHighRisk": false,
           "thresholds": {

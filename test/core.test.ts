@@ -345,6 +345,75 @@ test("permission policy escalates outside-workspace and VCS-history risk", () =>
   )
 })
 
+test("permission policy applies command deny rules before Jev signals", () => {
+  // Given
+  const configured = resolveOptions({
+    router: {
+      models: {
+        fast: "p/fast",
+        normal: "p/normal",
+        deep: "p/deep",
+      },
+    },
+    autoMode: {
+      commandRules: {
+        deny: ["git push *"],
+        ask: ["git push origin main"],
+      },
+    },
+  })
+
+  // When
+  const decision = decidePermission("ask", safeSignals(), configured, {
+    action: "bash",
+    resources: ["git push origin main"],
+  })
+
+  // Then
+  assert.equal(decision.effect, "deny")
+})
+
+test("permission policy keeps explicit command ask rules as user checkpoints", () => {
+  // Given
+  const configured = resolveOptions({
+    router: {
+      models: {
+        fast: "p/fast",
+        normal: "p/normal",
+        deep: "p/deep",
+      },
+    },
+    autoMode: {
+      commandRules: {
+        ask: ["npm publish"],
+      },
+    },
+  })
+
+  // When
+  const decision = decidePermission("ask", safeSignals(), configured, {
+    action: "bash",
+    resources: ["npm publish"],
+  })
+
+  // Then
+  assert.equal(decision.effect, "ask")
+})
+
+test("permission policy denies commands that destroy critical system paths", () => {
+  // Given
+  const configured = options()
+
+  // When
+  const decision = decidePermission("ask", safeSignals(), configured, {
+    action: "bash",
+    resources: ["rm -rf /"],
+  })
+
+  // Then
+  assert.equal(decision.effect, "deny")
+})
+
 test("permission metadata is omitted by default and opt-in when configured", async () => {
   let state: unknown
   const fakeJev = {
@@ -931,7 +1000,7 @@ test("Auto Mode allows safe permission requests and keeps risky requests as ask"
   )
 })
 
-test("Auto Mode rejects high-risk permissions when configured", async () => {
+test("Auto Mode keeps high-risk permissions available for human approval", async () => {
   const mock = pluginInput()
 
   await withFetch(
@@ -961,7 +1030,7 @@ test("Auto Mode rejects high-risk permissions when configured", async () => {
         },
         request,
       )
-      assert.equal(request.status, "deny")
+      assert.equal(request.status, "ask")
     },
   )
 })
@@ -1009,7 +1078,7 @@ test("Auto Mode responds to the host permission.asked event", async () => {
   )
 })
 
-test("Auto Mode rejects a high-risk host permission event", async () => {
+test("Auto Mode does not reject a high-risk host permission event", async () => {
   const mock = pluginInput()
   const replies: Array<{ url: string; body: string }> = []
 
@@ -1046,12 +1115,7 @@ test("Auto Mode rejects a high-risk host permission event", async () => {
         },
       } as any)
 
-      assert.deepEqual(replies, [
-        {
-          url: "http://localhost:4096/permission/permission_2/reply",
-          body: '{"reply":"reject"}',
-        },
-      ])
+      assert.deepEqual(replies, [])
     },
   )
 })

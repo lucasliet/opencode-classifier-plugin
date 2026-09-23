@@ -33,6 +33,10 @@ export interface RouterOptions {
 export interface AutoModeOptions {
   enabled?: boolean
   onError?: "ask" | "preserve"
+  commandRules?: {
+    ask?: string[]
+    deny?: string[]
+  }
   thresholds?: {
     autoAllow?: number
     projectChange?: number
@@ -117,6 +121,10 @@ export interface ResolvedOptions {
   autoMode: {
     enabled: boolean
     onError: "ask" | "preserve"
+    commandRules: {
+      ask: string[]
+      deny: string[]
+    }
     thresholds: Required<NonNullable<AutoModeOptions["thresholds"]>>
     allowReversibleProjectChanges: boolean
     denyHighRisk: boolean

@@ -41,6 +41,12 @@ function stringMap(value: unknown): Record<string, string> {
   return out
 }
 
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+    .map((item) => item.trim())
+}
+
 export function resolveOptions(raw: unknown): ResolvedOptions {
   const source = record(raw) as PluginOptions & Record<string, unknown>
   const decision = record(source.decision)
@@ -49,6 +55,7 @@ export function resolveOptions(raw: unknown): ResolvedOptions {
   const routerEfforts = record(router.efforts)
   const routerThresholds = record(router.thresholds)
   const autoMode = record(source.autoMode)
+  const autoModeCommandRules = record(autoMode.commandRules)
   const autoModeThresholds = record(autoMode.thresholds)
   const agents = record(source.agents)
   const skills = record(source.skills)
@@ -119,6 +126,10 @@ export function resolveOptions(raw: unknown): ResolvedOptions {
     autoMode: {
       enabled: bool(autoMode.enabled, true),
       onError,
+      commandRules: {
+        ask: stringList(autoModeCommandRules.ask),
+        deny: stringList(autoModeCommandRules.deny),
+      },
       thresholds: {
         autoAllow: num(autoModeThresholds.autoAllow, 0.80, 0, 1),
         projectChange: num(autoModeThresholds.projectChange, 0.60, 0, 1),

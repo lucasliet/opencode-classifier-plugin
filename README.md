@@ -275,9 +275,13 @@ before the user responds.
 The plugin classifies each request and then:
 
 - Jev/local policy says **allow** -> sends `once`;
-- policy says **deny** and `denyHighRisk` is enabled -> sends `reject`;
+- Jev classifies a request as high-risk -> does not reply, so a human can approve or reject it;
 - policy says **ask** -> does not reply, so the normal OpenCode permission UI remains in control;
 - classifier unavailable -> does not reply, so the user is asked.
+
+Before Jev evaluates a shell request, Auto Mode applies command boundaries. This mirrors Claude Code's documented precedence for explicit rules: a matching `deny` rule wins, a matching `ask` rule keeps the host permission prompt, and Jev classifies only requests that remain. Commands that attempt critical system destruction, such as `rm -rf /`, filesystem formatting, power control, or writing directly to `/dev`, are always denied.
+
+`commandRules` accepts exact command strings or a single trailing `*` prefix. For example, `git push *` matches both `git push` and `git push origin main`; it does not match `git -C repo push`. Use specific rules rather than broad shell wildcards. Only `commandRules.deny` is a final rejection; a Jev high-risk classification never prevents a human from approving the pending request.
 
 Do not enable OpenCode's separate blanket auto-accept mode if you want Jev to make these decisions; blanket auto-accept can answer the request before the classifier.
 
@@ -306,6 +310,15 @@ Example:
   "autoMode": {
     "enabled": true,
     "onError": "ask",
+    "commandRules": {
+      "ask": [
+        "git push *",
+        "npm publish"
+      ],
+      "deny": [
+        "git push --force *"
+      ]
+    },
     "allowReversibleProjectChanges": true,
     "denyHighRisk": false,
     "thresholds": {
@@ -318,6 +331,8 @@ Example:
   }
 }
 ```
+
+The external Claude Code classifier is not public, so exact model-level parity is not possible. This plugin implements its documented, observable contract through deterministic rule precedence, protected destructive commands, Jev classification, and fail-closed fallback to the normal OpenCode prompt.
 
 An OpenCode permission already configured as `allow` does not emit an event, so the plugin cannot re-review it. Configure potentially sensitive actions as `ask` if you want Jev Auto Mode to evaluate them. An explicit OpenCode `deny` is never converted to `allow`.
 

@@ -47,6 +47,10 @@ test("opencode.example.json uses the 1.18 plugin tuple shape", async () => {
     normal: "medium",
     deep: "high",
   })
+  assert.deepEqual(resolved.autoMode.commandRules, {
+    ask: ["git push *", "npm publish"],
+    deny: ["git push --force *"],
+  })
   assert.equal(resolved.context.maxBatches, 4)
   assert.equal(resolved.skills.enabled, true)
   assert.equal(resolved.skills.maxSelected, 1)
