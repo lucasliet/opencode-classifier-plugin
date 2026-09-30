@@ -16,6 +16,7 @@ interface MockContext {
   switchedAgents: unknown[]
   addedProviders: unknown[]
   permissionRequests: unknown[]
+  emit: (event: Record<string, unknown>) => Promise<void>
 }
 
 function mockContext(
@@ -24,12 +25,15 @@ function mockContext(
     providerID: "jev-model-router",
     id: "auto",
   },
+  sessionModel: { providerID: string; id: string } | undefined = undefined,
 ): MockContext {
   const hooks: HookCalls = { permission: [], prompt: [], context: [] }
   const switchedModels: unknown[] = []
   const switchedAgents: unknown[] = []
   const addedProviders: unknown[] = []
   const permissionRequests: unknown[] = []
+  const pendingEvents: Record<string, unknown>[] = []
+  let drain: (() => void) | undefined = undefined
 
   const ctx = {
     app: { version: "2.0.15-test" },
@@ -59,7 +63,10 @@ function mockContext(
         switchedAgents.push(input)
       },
       async get() {
-        return { id: "ses_1" }
+        return {
+          id: "ses_1",
+          ...(sessionModel ? { model: sessionModel } : {}),
+        }
       },
     },
     provider: {
@@ -86,7 +93,17 @@ function mockContext(
         const iterable: AsyncIterable<unknown> = {
           [Symbol.asyncIterator]() {
             return {
-              next: () => new Promise(() => {}) as Promise<IteratorResult<unknown>>,
+              async next(): Promise<IteratorResult<unknown>> {
+                const event = pendingEvents.shift()
+                if (event) return { value: event, done: false }
+                await new Promise<void>((resolve) => {
+                  drain = resolve
+                })
+                const queued = pendingEvents.shift()
+                return queued
+                  ? { value: queued, done: false }
+                  : { value: undefined, done: true }
+              },
             }
           },
         }
@@ -95,7 +112,24 @@ function mockContext(
     },
   }
 
-  return { ctx, hooks, switchedModels, switchedAgents, addedProviders, permissionRequests }
+  const emit = async (event: Record<string, unknown>) => {
+    pendingEvents.push(event)
+    drain?.()
+    drain = undefined
+    // Let the subscription loop consume and process the event.
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+
+  return {
+    ctx,
+    hooks,
+    switchedModels,
+    switchedAgents,
+    addedProviders,
+    permissionRequests,
+    emit,
+  }
 }
 
 function routerOptions(extra: Record<string, unknown> = {}) {
@@ -454,6 +488,203 @@ test("v2 context hook detects a manual override and stops routing", async () => 
         delivery: "steer",
       })
       assert.equal(mock.switchedModels.length, 1)
+    },
+  )
+})
+
+test("v2 prompt hook routes a session-level Auto selection before first dispatch", async () => {
+  const mock = mockContext(
+    routerOptions(),
+    { providerID: "p", id: "normal" },
+    { providerID: "jev-model-router", id: "auto" },
+  )
+  await withFetch(
+    (async () => new Response(JSON.stringify(routeResponse("fast")), { status: 200 })) as typeof fetch,
+    async () => {
+      await setupV2(mock.ctx)
+
+      await mock.hooks.prompt[0]?.({
+        sessionID: "ses_1",
+        prompt: { text: "fix the typo" },
+        delivery: "steer",
+      })
+
+      assert.deepEqual(mock.switchedModels, [
+        { sessionID: "ses_1", model: { providerID: "p", id: "fast" } },
+      ])
+    },
+  )
+})
+
+test("v2 prompt hook leaves a session-level real selection alone before first dispatch", async () => {
+  const mock = mockContext(
+    routerOptions(),
+    { providerID: "jev-model-router", id: "auto" },
+    { providerID: "p", id: "normal" },
+  )
+  let jevCalls = 0
+  await withFetch(
+    (async () => {
+      jevCalls += 1
+      return new Response(JSON.stringify(routeResponse("fast")), { status: 200 })
+    }) as typeof fetch,
+    async () => {
+      await setupV2(mock.ctx)
+
+      await mock.hooks.prompt[0]?.({
+        sessionID: "ses_1",
+        prompt: { text: "fix the typo" },
+        delivery: "steer",
+      })
+
+      assert.deepEqual(mock.switchedModels, [])
+      assert.equal(jevCalls, 0)
+    },
+  )
+})
+
+test("v2 model selection event stops routing after the user picks a real model", async () => {
+  const mock = mockContext(routerOptions())
+  await withFetch(
+    (async () => new Response(JSON.stringify(routeResponse("fast")), { status: 200 })) as typeof fetch,
+    async () => {
+      await setupV2(mock.ctx)
+
+      await mock.hooks.prompt[0]?.({
+        sessionID: "ses_1",
+        prompt: { text: "fix the typo" },
+        delivery: "steer",
+      })
+      assert.equal(mock.switchedModels.length, 1)
+
+      // Dispatch ran on our routed model: routing stays armed.
+      await mock.hooks.context[0]?.({
+        sessionID: "ses_1",
+        agent: "build",
+        model: { providerID: "p", id: "fast" },
+        system: [],
+        messages: [],
+        tools: {},
+        options: {},
+      })
+
+      // User manually switched while the router was armed.
+      await mock.emit({
+        type: "session.model.selected",
+        data: {
+          sessionID: "ses_1",
+          model: { providerID: "other", id: "model" },
+        },
+      })
+
+      await mock.hooks.prompt[0]?.({
+        sessionID: "ses_1",
+        prompt: { text: "another task" },
+        delivery: "steer",
+      })
+      assert.equal(mock.switchedModels.length, 1)
+    },
+  )
+})
+
+test("v2 model selection event stops routing on a stale virtual mirror", async () => {
+  const mock = mockContext(routerOptions())
+  let jevCalls = 0
+  await withFetch(
+    (async () => {
+      jevCalls += 1
+      return new Response(JSON.stringify(routeResponse("fast")), { status: 200 })
+    }) as typeof fetch,
+    async () => {
+      await setupV2(mock.ctx)
+
+      // A dispatch was attempted on the virtual model, so the context hook
+      // mirrored it before the user intervened.
+      await mock.hooks.context[0]?.({
+        sessionID: "ses_1",
+        agent: "build",
+        model: { providerID: "jev-model-router", id: "auto" },
+        system: [],
+        messages: [],
+        tools: {},
+        options: {},
+      })
+
+      // User switched to a real model: the stale virtual mirror must not
+      // re-arm the router.
+      await mock.emit({
+        type: "session.model.selected",
+        data: {
+          sessionID: "ses_1",
+          model: { providerID: "other", id: "model" },
+        },
+      })
+
+      await mock.hooks.prompt[0]?.({
+        sessionID: "ses_1",
+        prompt: { text: "another task" },
+        delivery: "steer",
+      })
+      assert.deepEqual(mock.switchedModels, [])
+      assert.equal(jevCalls, 0)
+    },
+  )
+})
+
+test("v2 model selection event re-arms routing when Auto is picked again", async () => {
+  const mock = mockContext(routerOptions())
+  await withFetch(
+    (async () => new Response(JSON.stringify(routeResponse("fast")), { status: 200 })) as typeof fetch,
+    async () => {
+      await setupV2(mock.ctx)
+
+      await mock.hooks.prompt[0]?.({
+        sessionID: "ses_1",
+        prompt: { text: "fix the typo" },
+        delivery: "steer",
+      })
+      assert.equal(mock.switchedModels.length, 1)
+
+      await mock.hooks.context[0]?.({
+        sessionID: "ses_1",
+        agent: "build",
+        model: { providerID: "p", id: "fast" },
+        system: [],
+        messages: [],
+        tools: {},
+        options: {},
+      })
+
+      await mock.emit({
+        type: "session.model.selected",
+        data: {
+          sessionID: "ses_1",
+          model: { providerID: "other", id: "model" },
+        },
+      })
+
+      await mock.hooks.prompt[0]?.({
+        sessionID: "ses_1",
+        prompt: { text: "another task" },
+        delivery: "steer",
+      })
+      assert.equal(mock.switchedModels.length, 1)
+
+      // Selecting Auto again must route again.
+      await mock.emit({
+        type: "session.model.selected",
+        data: {
+          sessionID: "ses_1",
+          model: { providerID: "jev-model-router", id: "auto" },
+        },
+      })
+
+      await mock.hooks.prompt[0]?.({
+        sessionID: "ses_1",
+        prompt: { text: "one more task" },
+        delivery: "steer",
+      })
+      assert.equal(mock.switchedModels.length, 2)
     },
   )
 })

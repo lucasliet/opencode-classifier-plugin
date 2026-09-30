@@ -102,6 +102,36 @@ function errorMessage(error: unknown): string {
 }
 
 /**
+ * Extracts the selected model from a `session.model.selected` event. V2
+ * payloads nest it under `data`; V1-style buses use `properties`.
+ */
+function eventModelRef(
+  event: unknown,
+): { providerID: string; id: string; variant?: string } | undefined {
+  if (!event || typeof event !== "object") return undefined
+  const record = event as Record<string, unknown>
+  for (const key of ["data", "properties"]) {
+    const container =
+      record[key] && typeof record[key] === "object"
+        ? (record[key] as Record<string, unknown>)
+        : undefined
+    const raw = container?.model
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue
+    const model = raw as Record<string, unknown>
+    if (typeof model.providerID !== "string" || !model.providerID) continue
+    if (typeof model.id !== "string" || !model.id) continue
+    return {
+      providerID: model.providerID,
+      id: model.id,
+      ...(typeof model.variant === "string" && model.variant
+        ? { variant: model.variant }
+        : {}),
+    }
+  }
+  return undefined
+}
+
+/**
  * V2 setup for OpenCode >= 2. Implements the same product behavior as the
  * v1 adapter (src/v1.ts) through native V2 primitives:
  *
@@ -136,6 +166,30 @@ export async function setupV2(ctx: V2Context): Promise<(() => void) | void> {
       sessions.set(sessionID, state)
     }
     return state
+  }
+
+  /**
+   * Mirrors model selections as they happen instead of waiting for the next
+   * dispatch. A selection that is neither the virtual router nor a model
+   * this router chose is a manual override: routing stops until Auto is
+   * selected again.
+   */
+  const observeModelSelection = (event: unknown): void => {
+    const sessionID = eventSessionID(event)
+    const model = eventModelRef(event)
+    if (!sessionID || !model) return
+    const selected = toModelRef(model)
+    const state = stateFor(sessionID)
+    state.mirrorModel = selected
+    if (!isVirtualModel(selected) && !sameModelRef(selected, state.turnModel)) {
+      state.routedByUs = false
+      delete state.turnModel
+      delete state.routedTier
+    }
+    trace("v2 model selection observed", {
+      sessionID,
+      model: `${selected.providerID}/${selected.id}`,
+    })
   }
 
   if (options.router.enabled) {
@@ -203,15 +257,16 @@ export async function setupV2(ctx: V2Context): Promise<(() => void) | void> {
 
     // The prompt event carries no model info, so routing relies on a mirror
     // of the last model observed in the context hook. An unknown mirror
-    // falls back to the global default: only sessions that default to the
-    // virtual model are treated as routable before the first dispatch.
+    // falls back to the session's own selected model, then the global
+    // default: only sessions expected to dispatch on the virtual model are
+    // treated as routable before the first dispatch.
     const mirror = state.mirrorModel
     let routable = false
     if (options.router.enabled) {
       if (mirror) {
         routable = isVirtualModel(mirror) || state.routedByUs === true
       } else {
-        routable = await defaultIsVirtual(ctx, trace)
+        routable = await sessionDispatchesVirtual(ctx, sessionID, trace)
       }
     }
     if (!routable && !options.agents.enabled) return
@@ -315,6 +370,10 @@ export async function setupV2(ctx: V2Context): Promise<(() => void) | void> {
   void (async () => {
     try {
       for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+        if (event.type === "session.model.selected") {
+          observeModelSelection(event)
+          continue
+        }
         if (event.type !== "session.deleted") continue
         const sessionID = eventSessionID(event)
         if (!sessionID) continue
@@ -342,10 +401,35 @@ function versionOf(app: unknown): string {
 }
 
 /**
+ * Whether the session is expected to dispatch on the virtual router before
+ * the plugin has observed any dispatch. Prefers the session's own selected
+ * model (the model picker writes it to the session); falls back to the
+ * global default when the session has no explicit choice. Without this,
+ * session-level Auto selections dispatch straight to the virtual provider
+ * and fail with a missing-credential error.
+ */
+async function sessionDispatchesVirtual(
+  ctx: V2Context,
+  sessionID: string,
+  trace: (message: string, details: Record<string, unknown>) => void,
+): Promise<boolean> {
+  try {
+    const session = await ctx.session.get({ sessionID })
+    const model = session?.model
+    if (model) return isVirtualModel(model)
+  } catch (error) {
+    trace("v2 session model unreadable", {
+      sessionID,
+      error: errorMessage(error),
+    })
+  }
+  return defaultIsVirtual(ctx, trace)
+}
+
+/**
  * Whether the global default model is the virtual router marker. Used only
- * when the session mirror is still unknown (before the first dispatch):
- * sessions that default to Auto are treated as routable, sessions with a
- * real default are left alone until the mirror is observed.
+ * when the session has no explicit model: sessions whose global default is
+ * Auto are treated as routable.
  */
 async function defaultIsVirtual(
   ctx: V2Context,

@@ -20,17 +20,20 @@ export function eventSessionID(event: unknown): string | undefined {
 
   if (typeof record.sessionID === "string") return record.sessionID
 
-  const properties =
-    record.properties && typeof record.properties === "object"
-      ? (record.properties as Record<string, unknown>)
-      : undefined
-  if (typeof properties?.sessionID === "string") return properties.sessionID
+  // V2 event payloads nest fields under `data`; V1 buses use `properties`.
+  for (const key of ["data", "properties"]) {
+    const container =
+      record[key] && typeof record[key] === "object"
+        ? (record[key] as Record<string, unknown>)
+        : undefined
+    if (typeof container?.sessionID === "string") return container.sessionID
 
-  const part =
-    properties?.part && typeof properties.part === "object"
-      ? (properties.part as Record<string, unknown>)
-      : undefined
-  if (typeof part?.sessionID === "string") return part.sessionID
+    const part =
+      container?.part && typeof container.part === "object"
+        ? (container.part as Record<string, unknown>)
+        : undefined
+    if (typeof part?.sessionID === "string") return part.sessionID
+  }
 
   return undefined
 }
