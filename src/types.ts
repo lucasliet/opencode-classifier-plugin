@@ -31,8 +31,8 @@ export interface DecisionOptions {
  * live quota, so no field is required: an empty block is a valid, working
  * configuration.
  */
-export interface RoutingOptions {
-  /** Master switch for subscription routing. */
+export interface ModelRoutingOptions {
+  /** Switch for subscription model routing. */
   enabled?: boolean
   /** Share of a quota window the router refuses to spend. */
   safetyMargin?: number
@@ -102,7 +102,18 @@ export interface DomainRoutingOptions {
   byDomain?: Record<string, string>
 }
 
-export interface ContextOptions {
+/**
+ * Routing group: which model takes the task and which agent runs it. The
+ * group switch turns both off; each feature also has its own switch.
+ */
+export interface RoutingOptions {
+  enabled?: boolean
+  models?: ModelRoutingOptions
+  agents?: DomainRoutingOptions
+}
+
+/** Large tool output trimmed to what the task needs, per request. */
+export interface ToolOutputOptions {
   enabled?: boolean
   minChars?: number
   chunkChars?: number
@@ -128,6 +139,16 @@ export interface CapabilityOptions {
   }
 }
 
+/**
+ * Context group: what each model request carries. The group switch turns
+ * both off; each feature also has its own switch.
+ */
+export interface ContextOptions {
+  enabled?: boolean
+  toolOutput?: ToolOutputOptions
+  capabilities?: CapabilityOptions
+}
+
 export interface PrivacyOptions {
   maxStateChars?: number
   maxPromptChars?: number
@@ -147,9 +168,7 @@ export interface PluginOptions {
   decision?: DecisionOptions
   routing?: RoutingOptions
   autoMode?: AutoModeOptions
-  agents?: DomainRoutingOptions
   context?: ContextOptions
-  capabilities?: CapabilityOptions
   privacy?: PrivacyOptions
 }
 
@@ -157,15 +176,23 @@ export interface ResolvedOptions {
   debug: boolean
   logFile: string
   decision: Required<DecisionOptions>
+  /** Each `enabled` already includes its group switch. */
   routing: {
-    enabled: boolean
-    safetyMargin: number
-    exclude: string[]
-    providerPools: Record<string, string>
-    providerAliases: Record<string, string>
-    referenceCatalog: string
-    quota: Required<NonNullable<RoutingOptions["quota"]>>
-    thresholds: Required<NonNullable<RoutingOptions["thresholds"]>>
+    models: {
+      enabled: boolean
+      safetyMargin: number
+      exclude: string[]
+      providerPools: Record<string, string>
+      providerAliases: Record<string, string>
+      referenceCatalog: string
+      quota: Required<NonNullable<ModelRoutingOptions["quota"]>>
+      thresholds: Required<NonNullable<ModelRoutingOptions["thresholds"]>>
+    }
+    agents: {
+      enabled: boolean
+      minimumProbability: number
+      byDomain: Record<string, string>
+    }
   }
   autoMode: {
     enabled: boolean
@@ -178,18 +205,16 @@ export interface ResolvedOptions {
     allowReversibleProjectChanges: boolean
     denyHighRisk: boolean
   }
-  agents: {
-    enabled: boolean
-    minimumProbability: number
-    byDomain: Record<string, string>
-  }
-  context: Required<ContextOptions>
-  capabilities: {
-    enabled: boolean
-    relevantAt: number
-    alwaysInclude: {
-      skills: string[]
-      namespaces: string[]
+  /** Each `enabled` already includes its group switch. */
+  context: {
+    toolOutput: Required<ToolOutputOptions>
+    capabilities: {
+      enabled: boolean
+      relevantAt: number
+      alwaysInclude: {
+        skills: string[]
+        namespaces: string[]
+      }
     }
   }
   privacy: Required<PrivacyOptions>

@@ -76,14 +76,18 @@ export function resolveOptions(raw: unknown): ResolvedOptions {
   const source = record(raw) as PluginOptions & Record<string, unknown>
   const decision = record(source.decision)
   const routing = record(source.routing)
-  const routingQuota = record(routing.quota)
-  const routingThresholds = record(routing.thresholds)
+  const routingEnabled = bool(routing.enabled, true)
+  const models = record(routing.models)
+  const modelsQuota = record(models.quota)
+  const modelsThresholds = record(models.thresholds)
+  const agents = record(routing.agents)
   const autoMode = record(source.autoMode)
   const autoModeCommandRules = record(autoMode.commandRules)
   const autoModeThresholds = record(autoMode.thresholds)
-  const agents = record(source.agents)
   const context = record(source.context)
-  const capabilities = record(source.capabilities)
+  const contextEnabled = bool(context.enabled, true)
+  const toolOutput = record(context.toolOutput)
+  const capabilities = record(context.capabilities)
   const capabilitiesAlwaysInclude = record(capabilities.alwaysInclude)
   const privacy = record(source.privacy)
 
@@ -103,25 +107,32 @@ export function resolveOptions(raw: unknown): ResolvedOptions {
       retries: integer(decision.retries, 1, 0, 5),
     },
     routing: {
-      enabled: bool(routing.enabled, true),
-      safetyMargin: num(routing.safetyMargin, 0.1, 0, 0.9),
-      exclude: stringList(routing.exclude),
-      providerPools: stringMap(routing.providerPools),
-      providerAliases: stringMap(routing.providerAliases),
-      referenceCatalog: expandHome(str(routing.referenceCatalog, defaultReferencePath())),
-      quota: {
-        enabled: bool(routingQuota.enabled, true),
-        binary: str(routingQuota.binary, DEFAULT_QUOTA_BINARY),
-        args: listOr(routingQuota.args, DEFAULT_QUOTA_ARGS),
-        vendorArgs: listOr(routingQuota.vendorArgs, DEFAULT_VENDOR_ARGS),
-        timeoutMs: integer(routingQuota.timeoutMs, 8_000, 500, 60_000),
-        refreshSeconds: integer(routingQuota.refreshSeconds, 120, 30, 3_600),
+      models: {
+        enabled: routingEnabled && bool(models.enabled, true),
+        safetyMargin: num(models.safetyMargin, 0.1, 0, 0.9),
+        exclude: stringList(models.exclude),
+        providerPools: stringMap(models.providerPools),
+        providerAliases: stringMap(models.providerAliases),
+        referenceCatalog: expandHome(str(models.referenceCatalog, defaultReferencePath())),
+        quota: {
+          enabled: bool(modelsQuota.enabled, true),
+          binary: str(modelsQuota.binary, DEFAULT_QUOTA_BINARY),
+          args: listOr(modelsQuota.args, DEFAULT_QUOTA_ARGS),
+          vendorArgs: listOr(modelsQuota.vendorArgs, DEFAULT_VENDOR_ARGS),
+          timeoutMs: integer(modelsQuota.timeoutMs, 8_000, 500, 60_000),
+          refreshSeconds: integer(modelsQuota.refreshSeconds, 120, 30, 3_600),
+        },
+        thresholds: {
+          fastChoice: num(modelsThresholds.fastChoice, 0.72, 0, 1),
+          deepChoice: num(modelsThresholds.deepChoice, 0.58, 0, 1),
+          deepReasoning: num(modelsThresholds.deepReasoning, 0.72, 0, 1),
+          highRisk: num(modelsThresholds.highRisk, 0.72, 0, 1),
+        },
       },
-      thresholds: {
-        fastChoice: num(routingThresholds.fastChoice, 0.72, 0, 1),
-        deepChoice: num(routingThresholds.deepChoice, 0.58, 0, 1),
-        deepReasoning: num(routingThresholds.deepReasoning, 0.72, 0, 1),
-        highRisk: num(routingThresholds.highRisk, 0.72, 0, 1),
+      agents: {
+        enabled: routingEnabled && bool(agents.enabled, false),
+        minimumProbability: num(agents.minimumProbability, 0.85, 0, 1),
+        byDomain: stringMap(agents.byDomain),
       },
     },
     autoMode: {
@@ -141,28 +152,25 @@ export function resolveOptions(raw: unknown): ResolvedOptions {
       allowReversibleProjectChanges: bool(autoMode.allowReversibleProjectChanges, true),
       denyHighRisk: bool(autoMode.denyHighRisk, false),
     },
-    agents: {
-      enabled: bool(agents.enabled, false),
-      minimumProbability: num(agents.minimumProbability, 0.85, 0, 1),
-      byDomain: stringMap(agents.byDomain),
-    },
     context: {
-      enabled: bool(context.enabled, true),
-      minChars: integer(context.minChars, 12_000, 1_000, 1_000_000),
-      chunkChars: integer(context.chunkChars, 2_500, 300, 20_000),
-      minimumCandidates: integer(context.minimumCandidates, 6, 2, 64),
-      maxCandidates: integer(context.maxCandidates, 24, 2, 64),
-      maxBatches: integer(context.maxBatches, 4, 1, 32),
-      relevantAt: num(context.relevantAt, 0.52, 0, 1),
-    },
-    capabilities: {
-      enabled: bool(capabilities.enabled, true),
-      relevantAt: num(capabilities.relevantAt, 0.4, 0, 1),
-      alwaysInclude: {
-        skills: stringList(capabilitiesAlwaysInclude.skills),
-        namespaces: Array.isArray(capabilitiesAlwaysInclude.namespaces)
-          ? stringList(capabilitiesAlwaysInclude.namespaces)
-          : [...DEFAULT_ALWAYS_INCLUDED_NAMESPACES],
+      toolOutput: {
+        enabled: contextEnabled && bool(toolOutput.enabled, true),
+        minChars: integer(toolOutput.minChars, 12_000, 1_000, 1_000_000),
+        chunkChars: integer(toolOutput.chunkChars, 2_500, 300, 20_000),
+        minimumCandidates: integer(toolOutput.minimumCandidates, 6, 2, 64),
+        maxCandidates: integer(toolOutput.maxCandidates, 24, 2, 64),
+        maxBatches: integer(toolOutput.maxBatches, 4, 1, 32),
+        relevantAt: num(toolOutput.relevantAt, 0.52, 0, 1),
+      },
+      capabilities: {
+        enabled: contextEnabled && bool(capabilities.enabled, true),
+        relevantAt: num(capabilities.relevantAt, 0.4, 0, 1),
+        alwaysInclude: {
+          skills: stringList(capabilitiesAlwaysInclude.skills),
+          namespaces: Array.isArray(capabilitiesAlwaysInclude.namespaces)
+            ? stringList(capabilitiesAlwaysInclude.namespaces)
+            : [...DEFAULT_ALWAYS_INCLUDED_NAMESPACES],
+        },
       },
     },
     privacy: {

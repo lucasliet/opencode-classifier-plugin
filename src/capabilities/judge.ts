@@ -28,7 +28,7 @@ const ENVELOPE_CHARS = 512
  * @param options Resolved plugin configuration.
  * @param task The user's request for this turn.
  * @param candidates Skills and namespaces to judge.
- * @returns Keys of the candidates relevant at `capabilities.relevantAt` or above.
+ * @returns Keys of the candidates relevant at `context.capabilities.relevantAt` or above.
  * @throws When any Jev request fails; the caller keeps the full catalog.
  */
 export async function judgeCapabilities(
@@ -69,7 +69,7 @@ async function judgeBatch(
     questions,
   )
   return batch
-    .filter((_candidate, index) => noul(response, `item_${index}`, 1) >= options.capabilities.relevantAt)
+    .filter((_candidate, index) => noul(response, `item_${index}`, 1) >= options.context.capabilities.relevantAt)
     .map((candidate) => candidate.key)
 }
 

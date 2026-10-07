@@ -122,8 +122,8 @@ export async function OpenCodeClassifierPlugin(
     return state
   }
 
-  const loadReference = createReferenceLoader(options.routing.referenceCatalog)
-  const isExcluded = compileExclusions(options.routing.exclude)
+  const loadReference = createReferenceLoader(options.routing.models.referenceCatalog)
+  const isExcluded = compileExclusions(options.routing.models.exclude)
   const speed = createSpeedTracker()
 
   /**
@@ -144,32 +144,32 @@ export async function OpenCodeClassifierPlugin(
     })
 
     const ledger = ledgerFactory({
-      binary: options.routing.quota.binary,
-      args: options.routing.quota.args,
-      vendorArgs: options.routing.quota.vendorArgs,
-      timeoutMs: options.routing.quota.timeoutMs,
-      refreshSeconds: options.routing.quota.refreshSeconds,
+      binary: options.routing.models.quota.binary,
+      args: options.routing.models.quota.args,
+      vendorArgs: options.routing.models.quota.vendorArgs,
+      timeoutMs: options.routing.models.quota.timeoutMs,
+      refreshSeconds: options.routing.models.quota.refreshSeconds,
     })
     const runtime: RouterRuntime = {
       catalog: catalogFromSnapshot(snapshot),
       ledger,
-      quotaEnabled: options.routing.quota.enabled,
+      quotaEnabled: options.routing.models.quota.enabled,
       candidateSources: async () => ({
         subscriptions: ledger.subscriptions(),
-        overrides: options.routing.providerPools,
-        aliases: options.routing.providerAliases,
+        overrides: options.routing.models.providerPools,
+        aliases: options.routing.models.providerAliases,
         isExcluded,
         profileOf: profileResolver({
           reference: await loadReference(),
           speed,
-          aliases: options.routing.providerAliases,
+          aliases: options.routing.models.providerAliases,
           now: Date.now,
         }),
       }),
       refreshTimer: undefined,
     }
     if (runtime.quotaEnabled) {
-      const intervalMs = Math.max(1, options.routing.quota.refreshSeconds) * 1_000
+      const intervalMs = Math.max(1, options.routing.models.quota.refreshSeconds) * 1_000
       runtime.refreshTimer = setInterval(
         () => refreshInBackground(runtime.ledger, trace),
         intervalMs,
@@ -190,7 +190,7 @@ export async function OpenCodeClassifierPlugin(
 
   return {
     config: async (config) => {
-      if (!options.routing.enabled) return
+      if (!options.routing.models.enabled) return
       installVirtualProvider(config)
       installRouter(config)
     },
@@ -222,11 +222,11 @@ export async function OpenCodeClassifierPlugin(
        * the last routed model keeps being selected.
        */
       const stickyContinuation =
-        options.routing.enabled &&
+        options.routing.models.enabled &&
         state.routerActive &&
         sameModelRef(selected, state.lastRoutedModel)
       const useRouter =
-        options.routing.enabled && (selectedVirtual || stickyContinuation)
+        options.routing.models.enabled && (selectedVirtual || stickyContinuation)
       trace("v1 router selected", {
         sessionID: output.message.sessionID,
         selected: formatModelRef(selected),
@@ -246,7 +246,7 @@ export async function OpenCodeClassifierPlugin(
         delete state.lastRoutedModel
       }
 
-      const needsClassification = useRouter || options.agents.enabled
+      const needsClassification = useRouter || options.routing.agents.enabled
       let route: RouteClassification | undefined
 
       if (needsClassification) {
@@ -269,11 +269,11 @@ export async function OpenCodeClassifierPlugin(
 
       if (
         route &&
-        options.agents.enabled &&
+        options.routing.agents.enabled &&
         route.domain &&
-        (route.domainProbability ?? 0) >= options.agents.minimumProbability
+        (route.domainProbability ?? 0) >= options.routing.agents.minimumProbability
       ) {
-        const agent = options.agents.byDomain[route.domain]
+        const agent = options.routing.agents.byDomain[route.domain]
         if (agent) output.message.agent = agent
       }
 
@@ -322,7 +322,7 @@ export async function OpenCodeClassifierPlugin(
     },
 
     "experimental.chat.messages.transform": async (_input, output) => {
-      if (!options.context.enabled) return
+      if (!options.context.toolOutput.enabled) return
 
       const sessionID = latestSessionID(output.messages)
       if (!sessionID) return
@@ -734,8 +734,8 @@ function selectWithFloorRelaxation(
   requirements: TaskRequirements,
 ): RoutingDecision {
   const overrides = {
-    safetyMargin: options.routing.safetyMargin,
-    thresholds: options.routing.thresholds,
+    safetyMargin: options.routing.models.safetyMargin,
+    thresholds: options.routing.models.thresholds,
   }
   const first = selectModel({ ...routingInput, requirements }, overrides)
   if (first.selected !== undefined || requirements.tier === "economy") {

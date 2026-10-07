@@ -33,7 +33,7 @@ export interface TaskRequirementsInput {
   estimatedTurns: number
 }
 
-type RoutingThresholds = ResolvedOptions["routing"]["thresholds"]
+type RoutingThresholds = ResolvedOptions["routing"]["models"]["thresholds"]
 
 /**
  * Ask Jev to describe the request, without solving it.
@@ -53,7 +53,7 @@ export async function classifyRoute(
   options: ResolvedOptions,
   prompt: string,
 ): Promise<RouteClassification> {
-  const domains = new Set<string>(Object.keys(options.agents.byDomain))
+  const domains = new Set<string>(Object.keys(options.routing.agents.byDomain))
 
   const questions: Record<string, JevQuestion> = {
     complexity: {
@@ -152,7 +152,7 @@ export function requirementsFromRoute(
   options: ResolvedOptions,
   context: TaskRequirementsInput,
 ): TaskRequirements {
-  const tier = requiredTier(route, options.routing.thresholds)
+  const tier = requiredTier(route, options.routing.models.thresholds)
 
   return {
     tier,

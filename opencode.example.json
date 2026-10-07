@@ -13,7 +13,20 @@
           "retries": 1
         },
         "routing": {
-          "enabled": true
+          "enabled": true,
+          "models": {
+            "enabled": true
+          },
+          "agents": {
+            "enabled": false,
+            "minimumProbability": 0.85,
+            "byDomain": {
+              "frontend": "frontend",
+              "backend": "backend",
+              "database": "database",
+              "security": "security"
+            }
+          }
         },
         "autoMode": {
           "enabled": true,
@@ -37,31 +50,24 @@
             "deny": 0.65
           }
         },
-        "agents": {
-          "enabled": false,
-          "minimumProbability": 0.85,
-          "byDomain": {
-            "frontend": "frontend",
-            "backend": "backend",
-            "database": "database",
-            "security": "security"
-          }
-        },
         "context": {
           "enabled": true,
-          "minChars": 12000,
-          "chunkChars": 2500,
-          "minimumCandidates": 6,
-          "maxCandidates": 24,
-          "maxBatches": 4,
-          "relevantAt": 0.52
-        },
-        "capabilities": {
-          "enabled": true,
-          "relevantAt": 0.4,
-          "alwaysInclude": {
-            "skills": [],
-            "namespaces": ["opencode"]
+          "toolOutput": {
+            "enabled": true,
+            "minChars": 12000,
+            "chunkChars": 2500,
+            "minimumCandidates": 6,
+            "maxCandidates": 24,
+            "maxBatches": 4,
+            "relevantAt": 0.52
+          },
+          "capabilities": {
+            "enabled": true,
+            "relevantAt": 0.4,
+            "alwaysInclude": {
+              "skills": [],
+              "namespaces": ["opencode"]
+            }
           }
         },
         "privacy": {

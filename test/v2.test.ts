@@ -306,11 +306,13 @@ function pluginOptions(extra: Record<string, unknown> = {}) {
   return {
     decision: { apiKey: "test", retries: 0 },
     routing: {
-      referenceCatalog: "/nonexistent/opencode/models.json",
-      providerAliases: { "my-glm": "zai-coding-plan" },
+      models: {
+        referenceCatalog: "/nonexistent/opencode/models.json",
+        providerAliases: { "my-glm": "zai-coding-plan" },
+      },
+      agents: { enabled: false },
     },
-    agents: { enabled: false },
-    context: { enabled: false },
+    context: { toolOutput: { enabled: false } },
     ...extra,
   }
 }
@@ -712,7 +714,10 @@ test("v2 prompt hook still routes with a fallback classification when Jev fails"
 test("v2 prompt hook routes the agent by domain", async () => {
   const mock = mockContext(
     pluginOptions({
-      agents: { enabled: true, minimumProbability: 0.85, byDomain: { backend: "backend" } },
+      routing: {
+        models: { referenceCatalog: "/nonexistent/opencode/models.json" },
+        agents: { enabled: true, minimumProbability: 0.85, byDomain: { backend: "backend" } },
+      },
     }),
   )
   await withFetch(
@@ -983,7 +988,7 @@ test("v2 model selection event re-arms routing when Auto is picked again", async
 test("v2 prompt hook never routes a blacklisted provider", async () => {
   const mock = mockContext(
     pluginOptions({
-      routing: { referenceCatalog: "/nonexistent/opencode/models.json", exclude: ["my-glm"] },
+      routing: { models: { referenceCatalog: "/nonexistent/opencode/models.json", exclude: ["my-glm"] } },
     }),
   )
   await withFetch(

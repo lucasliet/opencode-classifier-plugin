@@ -9,7 +9,7 @@ export async function filterLargeToolContext(
   messages: unknown[],
   cache?: Map<string, string | undefined>,
 ): Promise<void> {
-  if (!options.context.enabled || !task.trim()) return
+  if (!options.context.toolOutput.enabled || !task.trim()) return
 
   for (const message of messages) {
     if (!isAssistantMessage(message)) continue
@@ -58,7 +58,7 @@ async function visitForToolText(
     if (
       state.status === "completed" &&
       typeof state.output === "string" &&
-      state.output.length >= options.context.minChars
+      state.output.length >= options.context.toolOutput.minChars
     ) {
       const filtered = await cachedFilter(
         jev,
@@ -75,7 +75,7 @@ async function visitForToolText(
     nextInsideTool &&
     record.type === "text" &&
     typeof record.text === "string" &&
-    record.text.length >= options.context.minChars
+    record.text.length >= options.context.toolOutput.minChars
   ) {
     const filtered = await cachedFilter(
       jev,
@@ -136,12 +136,12 @@ export async function filterText(
   task: string,
   text: string,
 ): Promise<string | undefined> {
-  const chunks = splitChunks(text, options.context.chunkChars)
-  if (chunks.length < options.context.minimumCandidates) return undefined
+  const chunks = splitChunks(text, options.context.toolOutput.chunkChars)
+  if (chunks.length < options.context.toolOutput.minimumCandidates) return undefined
 
   const scores = new Array<number>(chunks.length).fill(1)
-  const batchSize = Math.max(1, options.context.maxCandidates)
-  const maxChunks = Math.min(chunks.length, batchSize * options.context.maxBatches)
+  const batchSize = Math.max(1, options.context.toolOutput.maxCandidates)
+  const maxChunks = Math.min(chunks.length, batchSize * options.context.toolOutput.maxBatches)
   const taskBudget = Math.max(
     128,
     Math.min(
@@ -157,13 +157,13 @@ export async function filterText(
   let processed = 0
   let batches = 0
 
-  while (processed < maxChunks && batches < options.context.maxBatches) {
+  while (processed < maxChunks && batches < options.context.toolOutput.maxBatches) {
     const batch = chunks.slice(processed, Math.min(maxChunks, processed + batchSize))
     const bounded = fitBatchToBudget(
       batch,
       processed,
       batchBudget,
-      options.context.chunkChars,
+      options.context.toolOutput.chunkChars,
     )
     if (bounded.items.length === 0) break
 
@@ -210,7 +210,7 @@ export async function filterText(
       bestProcessedIndex = index
     }
 
-    if (score >= options.context.relevantAt) kept.push(chunk)
+    if (score >= options.context.toolOutput.relevantAt) kept.push(chunk)
     else removed += 1
   }
 
@@ -272,10 +272,10 @@ function contextCacheKey(
     [
       task,
       text,
-      options.context.chunkChars,
-      options.context.maxCandidates,
-      options.context.maxBatches,
-      options.context.relevantAt,
+      options.context.toolOutput.chunkChars,
+      options.context.toolOutput.maxCandidates,
+      options.context.toolOutput.maxBatches,
+      options.context.toolOutput.relevantAt,
       options.privacy.maxStateChars,
       options.privacy.maxPromptChars,
     ].join("\u0000"),

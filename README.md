@@ -13,6 +13,33 @@ The plugin provides:
 - skill and MCP selection: only what Jev picks for the task is described to
   the model (V2).
 
+## Features and switches
+
+Every feature is on or off from the plugin options. Related features share a
+group; the group switch turns all of them off, and each feature keeps its own
+switch.
+
+| Group | Feature | Switch | Default |
+|---|---|---|---|
+| `routing` | Subscription model routing (Auto (Jev), quota, failover) | `routing.models.enabled` | on |
+| `routing` | Agent routing by domain | `routing.agents.enabled` | off |
+| `autoMode` | Permission Auto Mode | `autoMode.enabled` | on |
+| `context` | Large tool-output filtering | `context.toolOutput.enabled` | on |
+| `context` | Skill and MCP selection (V2) | `context.capabilities.enabled` | on |
+
+`routing.enabled` and `context.enabled` are the group switches (default on).
+Debug logging is separate: see [Debug log](#debug-log).
+
+```json
+{
+  "routing": { "enabled": false },
+  "autoMode": { "enabled": false },
+  "context": { "enabled": false }
+}
+```
+
+turns everything off.
+
 ## Supported OpenCode API
 
 One package serves both runtimes from a single default export:
@@ -127,19 +154,19 @@ quota refresh:
    routed — no plugin change needed.
 2. **Which provider spends which subscription** is matched per provider, in
    this order:
-   - an explicit `routing.providerPools` entry (`{ "my-proxy": "anthropic" }`);
+   - an explicit `routing.models.providerPools` entry (`{ "my-proxy": "anthropic" }`);
    - the provider ID contains the vendor ID (`zai-coding-plan` → `zai`,
      `kimi-code-plan-global` → `kimi`, `github-copilot` → `copilot`). A custom
      provider that does not carry its vendor's name is read through its
-     `routing.providerAliases` entry (`{ "my-glm": "zai-coding-plan" }`), or
-     placed directly with `routing.providerPools`.
+     `routing.models.providerAliases` entry (`{ "my-glm": "zai-coding-plan" }`), or
+     placed directly with `routing.models.providerPools`.
 
    A provider that matches neither is never routed.
 3. **OAuth proof.** When `ai-usagebar vendors --json` says a vendor
    authenticates by OAuth (ChatGPT/Codex, Claude, Copilot), its providers must
    show an OAuth connection: the same provider with an API key is metered and
    is excluded. An unknown kind fails closed to "requires OAuth".
-4. **Blacklist.** `routing.exclude` removes providers (`corp-proxy`) or
+4. **Blacklist.** `routing.models.exclude` removes providers (`corp-proxy`) or
    single models (`zai-coding-plan/glm-5.3-flash`, `*` wildcards allowed) before
    anything else runs. Use it for accounts that must never be spent, such as a
    company subscription.
@@ -155,7 +182,7 @@ speed. They come from, in order of precedence:
    (benchmark-calibrated tiers, Go dollar allowances).
 2. **Derived profiles** for every other model, built from the host catalog and
    the models.dev cache OpenCode keeps at `~/.cache/opencode/models.json`
-   (`routing.referenceCatalog` overrides the path). The model's list price —
+   (`routing.models.referenceCatalog` overrides the path). The model's list price —
    the median across providers that sell the same model ID, then its family —
    drives capability on a log scale and the burn rate. Only a reasoning model
    priced by its own ID can be derived as `advanced`; models older than about
@@ -166,7 +193,7 @@ speed. They come from, in order of precedence:
    moving tokens-per-second average per model, and persists it in the plugin's
    storage. Until five turns are measured the name-based prior is blended in.
 
-A provider listed in `routing.providerAliases` is profiled as the provider it
+A provider listed in `routing.models.providerAliases` is profiled as the provider it
 stands for, so `{ "my-glm": "zai-coding-plan" }` gives `my-glm/glm-5.3` the
 `zai-coding-plan/glm-5.3` row; measured speed stays keyed by the real provider.
 
@@ -215,21 +242,24 @@ empty `routing` block is a valid, working configuration:
 ```jsonc
 {
   "routing": {
-    "enabled": true,              // default true
-    "safetyMargin": 0.10,         // 0..0.9, share of a quota window the router refuses to spend
-    "exclude": ["corp-proxy"],    // providers or provider/model patterns never routed
-    "providerPools": {},          // provider ID -> ai-usagebar vendor ID, when matching needs help
-    "providerAliases": {},        // provider ID -> provider ID it stands for (matching and profiles)
-    "referenceCatalog": "~/.cache/opencode/models.json", // models.dev cache for derived profiles
-    "quota": {
-      "enabled": true,            // default true
-      "binary": "ai-usagebar",    // quota reporter CLI
-      "args": ["usage", "--json"],
-      "vendorArgs": ["vendors", "--json"],
-      "timeoutMs": 8000,
-      "refreshSeconds": 120
-    },
-    "thresholds": { "fastChoice": 0.72, "deepChoice": 0.58, "deepReasoning": 0.72, "highRisk": 0.72 }
+    "enabled": true,                // group switch: false also turns off agent routing
+    "models": {
+      "enabled": true,              // default true
+      "safetyMargin": 0.10,         // 0..0.9, share of a quota window the router refuses to spend
+      "exclude": ["corp-proxy"],    // providers or provider/model patterns never routed
+      "providerPools": {},          // provider ID -> ai-usagebar vendor ID, when matching needs help
+      "providerAliases": {},        // provider ID -> provider ID it stands for (matching and profiles)
+      "referenceCatalog": "~/.cache/opencode/models.json", // models.dev cache for derived profiles
+      "quota": {
+        "enabled": true,            // default true
+        "binary": "ai-usagebar",    // quota reporter CLI
+        "args": ["usage", "--json"],
+        "vendorArgs": ["vendors", "--json"],
+        "timeoutMs": 8000,
+        "refreshSeconds": 120
+      },
+      "thresholds": { "fastChoice": 0.72, "deepChoice": 0.58, "deepReasoning": 0.72, "highRisk": 0.72 }
+    }
   }
 }
 ```
@@ -472,18 +502,22 @@ to another effect.
 
 ## Agent routing
 
-Agent routing is independent of model routing.
+Agent routing lives in the routing group next to model routing. It has its
+own switch and works with or without model routing; `routing.enabled: false`
+turns both off.
 
 ```json
 {
-  "agents": {
-    "enabled": true,
-    "minimumProbability": 0.85,
-    "byDomain": {
-      "frontend": "frontend",
-      "backend": "backend",
-      "database": "database",
-      "security": "security"
+  "routing": {
+    "agents": {
+      "enabled": true,
+      "minimumProbability": 0.85,
+      "byDomain": {
+        "frontend": "frontend",
+        "backend": "backend",
+        "database": "database",
+        "security": "security"
+      }
     }
   }
 }
@@ -511,16 +545,21 @@ Persisted session history is not modified.
 ```json
 {
   "context": {
-    "enabled": true,
-    "minChars": 12000,
-    "chunkChars": 2500,
-    "minimumCandidates": 6,
-    "maxCandidates": 24,
-    "maxBatches": 4,
-    "relevantAt": 0.52
+    "toolOutput": {
+      "enabled": true,
+      "minChars": 12000,
+      "chunkChars": 2500,
+      "minimumCandidates": 6,
+      "maxCandidates": 24,
+      "maxBatches": 4,
+      "relevantAt": 0.52
+    }
   }
 }
 ```
+
+Tool-output filtering and skill and MCP selection form the context group;
+`context.enabled: false` turns both off.
 
 Any unprocessed tail beyond the configured batch cap is preserved.
 
@@ -559,12 +598,14 @@ that prompt. The rewrite never touches persisted history.
 
 ```json
 {
-  "capabilities": {
-    "enabled": true,
-    "relevantAt": 0.4,
-    "alwaysInclude": {
-      "skills": [],
-      "namespaces": ["opencode"]
+  "context": {
+    "capabilities": {
+      "enabled": true,
+      "relevantAt": 0.4,
+      "alwaysInclude": {
+        "skills": [],
+        "namespaces": ["opencode"]
+      }
     }
   }
 }

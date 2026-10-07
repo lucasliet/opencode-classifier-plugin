@@ -13,7 +13,7 @@ export type ExclusionMatcher = (providerID: string, modelID: string) => boolean
 /**
  * Compile blacklist patterns once.
  *
- * @param patterns Patterns from `routing.exclude`.
+ * @param patterns Patterns from `routing.models.exclude`.
  * @returns A matcher that is true when the model must never be routed.
  */
 export function compileExclusions(patterns: readonly string[]): ExclusionMatcher {

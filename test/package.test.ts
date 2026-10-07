@@ -46,20 +46,20 @@ test("package manifest targets the classic OpenCode plugin API", async () => {
 })
 
 test("resolveOptions works with zero routing configuration", () => {
-  const resolved = resolveOptions({})
+  const resolved = resolveOptions({}).routing.models
 
-  assert.equal(resolved.routing.enabled, true)
-  assert.equal(resolved.routing.safetyMargin, 0.1)
-  assert.deepEqual(resolved.routing.exclude, [])
-  assert.deepEqual(resolved.routing.providerPools, {})
-  assert.match(resolved.routing.referenceCatalog, /opencode\/models\.json$/)
-  assert.equal(resolved.routing.quota.enabled, true)
-  assert.equal(resolved.routing.quota.binary, "ai-usagebar")
-  assert.deepEqual(resolved.routing.quota.args, ["usage", "--json"])
-  assert.deepEqual(resolved.routing.quota.vendorArgs, ["vendors", "--json"])
-  assert.equal(resolved.routing.quota.timeoutMs, 8000)
-  assert.equal(resolved.routing.quota.refreshSeconds, 120)
-  assert.deepEqual(resolved.routing.thresholds, {
+  assert.equal(resolved.enabled, true)
+  assert.equal(resolved.safetyMargin, 0.1)
+  assert.deepEqual(resolved.exclude, [])
+  assert.deepEqual(resolved.providerPools, {})
+  assert.match(resolved.referenceCatalog, /opencode\/models\.json$/)
+  assert.equal(resolved.quota.enabled, true)
+  assert.equal(resolved.quota.binary, "ai-usagebar")
+  assert.deepEqual(resolved.quota.args, ["usage", "--json"])
+  assert.deepEqual(resolved.quota.vendorArgs, ["vendors", "--json"])
+  assert.equal(resolved.quota.timeoutMs, 8000)
+  assert.equal(resolved.quota.refreshSeconds, 120)
+  assert.deepEqual(resolved.thresholds, {
     fastChoice: 0.72,
     deepChoice: 0.58,
     deepReasoning: 0.72,
@@ -70,35 +70,77 @@ test("resolveOptions works with zero routing configuration", () => {
 test("routing options parse and clamp out-of-range values", () => {
   const resolved = resolveOptions({
     routing: {
-      enabled: false,
-      safetyMargin: 5,
-      exclude: ["corp-proxy", " ", 3],
-      providerPools: { "my-proxy": "anthropic", bad: 1 },
-      referenceCatalog: "/tmp/models.json",
-      quota: {
-        binary: "usagebar-mock",
-        args: ["--json"],
-        timeoutMs: 10,
-        refreshSeconds: 999_999,
+      models: {
+        enabled: false,
+        safetyMargin: 5,
+        exclude: ["corp-proxy", " ", 3],
+        providerPools: { "my-proxy": "anthropic", bad: 1 },
+        referenceCatalog: "/tmp/models.json",
+        quota: {
+          binary: "usagebar-mock",
+          args: ["--json"],
+          timeoutMs: 10,
+          refreshSeconds: 999_999,
+        },
+        thresholds: { fastChoice: 4 },
       },
-      thresholds: { fastChoice: 4 },
     },
-  })
+  }).routing.models
 
-  assert.equal(resolved.routing.enabled, false)
-  assert.deepEqual(resolved.routing.exclude, ["corp-proxy"])
-  assert.deepEqual(resolved.routing.providerPools, { "my-proxy": "anthropic" })
-  assert.equal(resolved.routing.referenceCatalog, "/tmp/models.json")
+  assert.equal(resolved.enabled, false)
+  assert.deepEqual(resolved.exclude, ["corp-proxy"])
+  assert.deepEqual(resolved.providerPools, { "my-proxy": "anthropic" })
+  assert.equal(resolved.referenceCatalog, "/tmp/models.json")
   assert.equal(
-    resolveOptions({ routing: { referenceCatalog: "~/models.json" } }).routing.referenceCatalog,
+    resolveOptions({ routing: { models: { referenceCatalog: "~/models.json" } } }).routing.models.referenceCatalog,
     `${homedir()}/models.json`,
   )
-  assert.equal(resolved.routing.safetyMargin, 0.9)
-  assert.equal(resolved.routing.quota.binary, "usagebar-mock")
-  assert.deepEqual(resolved.routing.quota.args, ["--json"])
-  assert.equal(resolved.routing.quota.timeoutMs, 500)
-  assert.equal(resolved.routing.quota.refreshSeconds, 3600)
-  assert.equal(resolved.routing.thresholds.fastChoice, 1)
+  assert.equal(resolved.safetyMargin, 0.9)
+  assert.equal(resolved.quota.binary, "usagebar-mock")
+  assert.deepEqual(resolved.quota.args, ["--json"])
+  assert.equal(resolved.quota.timeoutMs, 500)
+  assert.equal(resolved.quota.refreshSeconds, 3600)
+  assert.equal(resolved.thresholds.fastChoice, 1)
+})
+
+test("a group switch turns off every feature in the group", () => {
+  // Given
+  const allOn = {
+    routing: { models: { enabled: true }, agents: { enabled: true } },
+    context: { toolOutput: { enabled: true }, capabilities: { enabled: true } },
+  }
+
+  // When
+  const groupsOff = resolveOptions({
+    routing: { ...allOn.routing, enabled: false },
+    context: { ...allOn.context, enabled: false },
+  })
+  const oneFeatureOff = resolveOptions({
+    routing: { ...allOn.routing, agents: { enabled: false } },
+    context: { ...allOn.context, capabilities: { enabled: false } },
+  })
+
+  // Then
+  assert.equal(groupsOff.routing.models.enabled, false)
+  assert.equal(groupsOff.routing.agents.enabled, false)
+  assert.equal(groupsOff.context.toolOutput.enabled, false)
+  assert.equal(groupsOff.context.capabilities.enabled, false)
+  assert.equal(oneFeatureOff.routing.models.enabled, true)
+  assert.equal(oneFeatureOff.routing.agents.enabled, false)
+  assert.equal(oneFeatureOff.context.toolOutput.enabled, true)
+  assert.equal(oneFeatureOff.context.capabilities.enabled, false)
+})
+
+test("top-level agents and capabilities blocks are not read", () => {
+  // When
+  const resolved = resolveOptions({
+    agents: { enabled: true },
+    capabilities: { enabled: false },
+  })
+
+  // Then
+  assert.equal(resolved.routing.agents.enabled, false)
+  assert.equal(resolved.context.capabilities.enabled, true)
 })
 
 test("a legacy router block is ignored", () => {
@@ -109,7 +151,7 @@ test("a legacy router block is ignored", () => {
     },
   })
 
-  assert.equal(resolved.routing.enabled, true)
+  assert.equal(resolved.routing.models.enabled, true)
   assert.equal("router" in resolved, false)
 })
 
@@ -125,15 +167,16 @@ test("opencode.example.json uses the 1.18 plugin tuple shape", async () => {
 
   const options = config.plugin[0][1] as Record<string, unknown>
   assert.equal("router" in options, false)
-  assert.deepEqual(options.routing, { enabled: true })
+  assert.deepEqual(Object.keys(options.routing as object), ["enabled", "models", "agents"])
+  assert.deepEqual(Object.keys(options.context as object), ["enabled", "toolOutput", "capabilities"])
 
   const resolved = resolveOptions(options)
-  assert.equal(resolved.routing.enabled, true)
+  assert.equal(resolved.routing.models.enabled, true)
   assert.deepEqual(resolved.autoMode.commandRules, {
     ask: ["git push *", "npm publish"],
     deny: ["git push --force *"],
   })
-  assert.equal(resolved.context.maxBatches, 4)
+  assert.equal(resolved.context.toolOutput.maxBatches, 4)
   assert.equal(resolved.decision.model, "jev-1.13-free")
   assert.equal("integrationID" in resolved.decision, false)
 })
@@ -166,7 +209,7 @@ test("opencode.example.jsonc uses the V2 plugins object shape", async () => {
   assert.equal((options.routing as Record<string, unknown>).enabled, true)
 
   const resolved = resolveOptions(options)
-  assert.equal(resolved.routing.enabled, true)
+  assert.equal(resolved.routing.models.enabled, true)
   assert.equal(resolved.autoMode.enabled, true)
   assert.equal(resolved.decision.model, "jev-1.13-free")
 })

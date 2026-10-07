@@ -297,9 +297,11 @@ async function routingHarness(options: {
       decision: { apiKey: "test", retries: 0 },
       ...plugin,
       routing: {
-        referenceCatalog: "/nonexistent/opencode/models.json",
-        providerAliases: { "my-glm": "zai-coding-plan" },
-        ...(plugin.routing as Record<string, unknown> | undefined),
+        models: {
+          referenceCatalog: "/nonexistent/opencode/models.json",
+          providerAliases: { "my-glm": "zai-coding-plan" },
+          ...((plugin.routing as { models?: Record<string, unknown> } | undefined)?.models),
+        },
       },
     },
     { createLedger: () => ledger },
@@ -351,11 +353,11 @@ test("parseModelRef preserves nested ids and variants", () => {
 })
 
 test("configuration resolves zero-config routing without a router block", () => {
-  const resolved = resolveOptions({})
-  assert.equal(resolved.routing.enabled, true)
-  assert.equal(resolved.routing.safetyMargin, 0.1)
-  assert.deepEqual(resolved.routing.exclude, [])
-  assert.deepEqual(resolved.routing.quota, {
+  const resolved = resolveOptions({}).routing.models
+  assert.equal(resolved.enabled, true)
+  assert.equal(resolved.safetyMargin, 0.1)
+  assert.deepEqual(resolved.exclude, [])
+  assert.deepEqual(resolved.quota, {
     enabled: true,
     binary: "ai-usagebar",
     args: ["usage", "--json"],
@@ -363,7 +365,7 @@ test("configuration resolves zero-config routing without a router block", () => 
     timeoutMs: 8_000,
     refreshSeconds: 120,
   })
-  assert.deepEqual(resolved.routing.thresholds, {
+  assert.deepEqual(resolved.thresholds, {
     fastChoice: 0.72,
     deepChoice: 0.58,
     deepReasoning: 0.72,
@@ -373,15 +375,15 @@ test("configuration resolves zero-config routing without a router block", () => 
 
 test("configuration clamps routing safety margin and quota refresh window", () => {
   const clamped = resolveOptions({
-    routing: { safetyMargin: 5, quota: { refreshSeconds: 1 } },
-  })
+    routing: { models: { safetyMargin: 5, quota: { refreshSeconds: 1 } } },
+  }).routing.models
   const floored = resolveOptions({
-    routing: { safetyMargin: -2, quota: { refreshSeconds: 99_999 } },
-  })
-  assert.equal(clamped.routing.safetyMargin, 0.9)
-  assert.equal(clamped.routing.quota.refreshSeconds, 30)
-  assert.equal(floored.routing.safetyMargin, 0)
-  assert.equal(floored.routing.quota.refreshSeconds, 3_600)
+    routing: { models: { safetyMargin: -2, quota: { refreshSeconds: 99_999 } } },
+  }).routing.models
+  assert.equal(clamped.safetyMargin, 0.9)
+  assert.equal(clamped.quota.refreshSeconds, 30)
+  assert.equal(floored.safetyMargin, 0)
+  assert.equal(floored.quota.refreshSeconds, 3_600)
 })
 
 test("requirements map confident mechanical work to the economy tier", () => {
@@ -696,8 +698,8 @@ test("System One retries 429 and rejects incomplete responses", async () => {
 
 test("context filtering supports OpenCode 1.18 ToolPart.state.output and cache", async () => {
   const configured = options()
-  configured.context = {
-    ...configured.context,
+  configured.context.toolOutput = {
+    ...configured.context.toolOutput,
     minChars: 1_000,
     chunkChars: 1_000,
     minimumCandidates: 2,
@@ -756,8 +758,8 @@ test("context filtering supports OpenCode 1.18 ToolPart.state.output and cache",
 
 test("context filtering batches outputs larger than a single privacy request", async () => {
   const configured = options()
-  configured.context = {
-    ...configured.context,
+  configured.context.toolOutput = {
+    ...configured.context.toolOutput,
     minChars: 1_000,
     chunkChars: 1_000,
     minimumCandidates: 2,
@@ -1042,7 +1044,7 @@ test("disabling the quota ledger still routes under unknown quota", async () => 
   await withFetch(routeHandler("normal"), async () => {
     const { hooks } = await routingHarness({
       providers: { "opencode-go": ["glm-5.3-flash"] },
-      plugin: { routing: { quota: { enabled: false } } },
+      plugin: { routing: { models: { quota: { enabled: false } } } },
     })
 
     const output = virtualTurn()
@@ -1083,10 +1085,12 @@ test("agent routing works with a manually selected real model", async () => {
     async () => {
       const hooks = await OpenCodeClassifierPlugin(mock.input, {
         decision: { apiKey: "test", retries: 0 },
-        agents: {
-          enabled: true,
-          minimumProbability: 0.8,
-          byDomain: { backend: "backend-specialist" },
+        routing: {
+          agents: {
+            enabled: true,
+            minimumProbability: 0.8,
+            byDomain: { backend: "backend-specialist" },
+          },
         },
       })
 

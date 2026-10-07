@@ -277,34 +277,34 @@ export async function setupV2(
   const contextFilterCache = new Map<string, string | undefined>()
   const capabilitySelector = createCapabilitySelector(
     (task, candidates) => judgeCapabilities(jev, options, task, candidates),
-    pinnedCapabilityKeys(options.capabilities.alwaysInclude),
+    pinnedCapabilityKeys(options.context.capabilities.alwaysInclude),
   )
 
   const createLedger = overrides.createLedger ?? createUsageBarLedger
   const ledger = createLedger({
-    binary: options.routing.quota.binary,
-    args: options.routing.quota.args,
-    vendorArgs: options.routing.quota.vendorArgs,
-    timeoutMs: options.routing.quota.timeoutMs,
-    refreshSeconds: options.routing.quota.refreshSeconds,
+    binary: options.routing.models.quota.binary,
+    args: options.routing.models.quota.args,
+    vendorArgs: options.routing.models.quota.vendorArgs,
+    timeoutMs: options.routing.models.quota.timeoutMs,
+    refreshSeconds: options.routing.models.quota.refreshSeconds,
   })
   let warmTimer: ReturnType<typeof setInterval> | undefined
-  if (options.routing.enabled && options.routing.quota.enabled) {
+  if (options.routing.models.enabled && options.routing.models.quota.enabled) {
     void ledger.refresh().catch(() => undefined)
     warmTimer = setInterval(() => {
       void ledger.refresh().catch(() => undefined)
-    }, options.routing.quota.refreshSeconds * 1_000)
+    }, options.routing.models.quota.refreshSeconds * 1_000)
     unrefTimer(warmTimer)
   }
-  const loadReference = createReferenceLoader(options.routing.referenceCatalog)
-  const blacklisted = compileExclusions(options.routing.exclude)
+  const loadReference = createReferenceLoader(options.routing.models.referenceCatalog)
+  const blacklisted = compileExclusions(options.routing.models.exclude)
   const health = createProviderHealth()
   const isExcluded = (providerID: string, modelID: string): boolean =>
     health.isCoolingDown(providerID) || blacklisted(providerID, modelID)
   const lastRequirements = new Map<string, TaskRequirements>()
   const selectOverrides: SelectOptionOverrides = {
-    safetyMargin: options.routing.safetyMargin,
-    thresholds: options.routing.thresholds,
+    safetyMargin: options.routing.models.safetyMargin,
+    thresholds: options.routing.models.thresholds,
   }
   const speed = await restoreSpeed(ctx, trace)
   const observeStepSpeed = createStepSpeedObserver(speed, () => {
@@ -314,13 +314,13 @@ export async function setupV2(
   /** Sources for one routing decision, read fresh from the ledger. */
   const candidateSources = async (): Promise<CandidateSources> => ({
     subscriptions: ledger.subscriptions(),
-    overrides: options.routing.providerPools,
-    aliases: options.routing.providerAliases,
+    overrides: options.routing.models.providerPools,
+    aliases: options.routing.models.providerAliases,
     isExcluded,
     profileOf: profileResolver({
       reference: await loadReference(),
       speed,
-      aliases: options.routing.providerAliases,
+      aliases: options.routing.models.providerAliases,
       now: Date.now,
     }),
   })
@@ -344,7 +344,7 @@ export async function setupV2(
    * decides whether data is fresh, so the kick is a no-op when it is.
    */
   const kickQuotaRefresh = (): Promise<void> | undefined => {
-    if (!options.routing.quota.enabled) return undefined
+    if (!options.routing.models.quota.enabled) return undefined
     return ledger.refresh().catch(() => undefined)
   }
 
@@ -406,7 +406,7 @@ export async function setupV2(
     })
   }
 
-  if (options.routing.enabled) {
+  if (options.routing.models.enabled) {
     try {
       await registerVirtualProvider(ctx)
       trace("v2 virtual provider registered", { ref: virtualRef() })
@@ -480,14 +480,14 @@ export async function setupV2(
     // treated as routable before the first dispatch.
     const mirror = state.mirrorModel
     let routable = false
-    if (options.routing.enabled) {
+    if (options.routing.models.enabled) {
       if (mirror) {
         routable = isVirtualModel(mirror) || state.routedByUs === true
       } else {
         routable = await sessionDispatchesVirtual(ctx, sessionID, trace)
       }
     }
-    if (!routable && !options.agents.enabled) return
+    if (!routable && !options.routing.agents.enabled) return
 
     const quotaKick = routable ? kickQuotaRefresh() : undefined
 
@@ -502,11 +502,11 @@ export async function setupV2(
 
     if (
       route &&
-      options.agents.enabled &&
+      options.routing.agents.enabled &&
       route.domain &&
-      (route.domainProbability ?? 0) >= options.agents.minimumProbability
+      (route.domainProbability ?? 0) >= options.routing.agents.minimumProbability
     ) {
-      const agent = options.agents.byDomain[route.domain]
+      const agent = options.routing.agents.byDomain[route.domain]
       if (agent) {
         try {
           await ctx.session.switchAgent({ sessionID, agent })
@@ -579,14 +579,14 @@ export async function setupV2(
     }
 
     if (!state?.task) return
-    if (options.capabilities.enabled) {
+    if (options.context.capabilities.enabled) {
       try {
         await narrowRequestCapabilities(capabilitySelector, event, state.task, trace)
       } catch (error) {
         trace("v2 capability narrowing failed", { sessionID, error: errorMessage(error) })
       }
     }
-    if (!options.context.enabled) return
+    if (!options.context.toolOutput.enabled) return
     try {
       await filterLargeToolContext(
         jev,

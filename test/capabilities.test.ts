@@ -161,7 +161,7 @@ test("a selection that hides nothing leaves the part untouched", () => {
 
 test("Jev keeps candidates at the relevance cutoff and treats missing answers as needed", async () => {
   // Given
-  const options = resolveOptions({ capabilities: { relevantAt: 0.4 } })
+  const options = resolveOptions({ context: { capabilities: { relevantAt: 0.4 } } })
   const jev = new FakeJev((name) => ({ pdf: 0.9, docx: 0.1, context7: 0.4 })[name])
   const candidates = [
     candidate("skill", "pdf"),
@@ -283,8 +283,8 @@ test("a request without a Code Mode part is left alone and Jev is not asked", as
 
 test("capability options default to on with the harness namespace pinned", () => {
   // When
-  const defaults = resolveOptions({}).capabilities
-  const emptyPins = resolveOptions({ capabilities: { alwaysInclude: { namespaces: [] } } }).capabilities
+  const defaults = resolveOptions({}).context.capabilities
+  const emptyPins = resolveOptions({ context: { capabilities: { alwaysInclude: { namespaces: [] } } } }).context.capabilities
 
   // Then
   assert.deepEqual(defaults, {
