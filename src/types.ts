@@ -1,3 +1,11 @@
+/**
+ * Legacy complexity band.
+ *
+ * Retained only so the V1 adapter keeps compiling while it transitions to the
+ * routing contracts; nothing in the plugin core uses it anymore. Task
+ * complexity is a signal (`RouteClassification.complexity`), not a model
+ * selector. Delete once `src/v1.ts` stops depending on it.
+ */
 export type ModelTier = "fast" | "normal" | "deep"
 
 export interface ModelRef {
@@ -16,12 +24,46 @@ export interface DecisionOptions {
   retries?: number
 }
 
-export interface RouterOptions {
+/**
+ * Zero-config model routing.
+ *
+ * The router discovers subscription models from the host and picks one from
+ * live quota, so no field is required: an empty block is a valid, working
+ * configuration.
+ */
+export interface RoutingOptions {
+  /** Master switch for subscription routing. */
   enabled?: boolean
-  sticky?: boolean
-  models?: Partial<Record<ModelTier, string>>
-  efforts?: Partial<Record<ModelTier, string>>
-  fallbackTier?: ModelTier
+  /** Share of a quota window the router refuses to spend. */
+  safetyMargin?: number
+  /**
+   * Never route to these. A pattern without `/` matches a provider ID
+   * (`claude-dipol`), one with `/` matches `provider/model`; `*` is a wildcard.
+   */
+  exclude?: string[]
+  /**
+   * Provider ID → `ai-usagebar` vendor ID, for providers the automatic
+   * association cannot place (for example `{ "my-proxy": "anthropic" }`).
+   */
+  providerPools?: Record<string, string>
+  /** models.dev cache used to derive profiles; defaults to OpenCode's cache. */
+  referenceCatalog?: string
+  quota?: {
+    enabled?: boolean
+    /** Executable that reports subscription quota. */
+    binary?: string
+    /** Arguments that make the binary print its usage document as JSON. */
+    args?: string[]
+    /** Arguments that make the binary list vendors and their auth kind as JSON. */
+    vendorArgs?: string[]
+    timeoutMs?: number
+    /** How long a quota snapshot stays fresh before a refetch. */
+    refreshSeconds?: number
+  }
+  /**
+   * Signal cutoffs, kept identical to the retired fixed-model router so
+   * existing tuning carries over unchanged.
+   */
   thresholds?: {
     fastChoice?: number
     deepChoice?: number
@@ -75,7 +117,7 @@ export interface PrivacyOptions {
 export interface PluginOptions {
   debug?: boolean
   decision?: DecisionOptions
-  router?: RouterOptions
+  routing?: RoutingOptions
   autoMode?: AutoModeOptions
   agents?: DomainRoutingOptions
   context?: ContextOptions
@@ -85,13 +127,14 @@ export interface PluginOptions {
 export interface ResolvedOptions {
   debug: boolean
   decision: Required<DecisionOptions>
-  router: {
+  routing: {
     enabled: boolean
-    sticky: boolean
-    models: Record<ModelTier, string>
-    efforts: Record<ModelTier, string>
-    fallbackTier: ModelTier
-    thresholds: Required<NonNullable<RouterOptions["thresholds"]>>
+    safetyMargin: number
+    exclude: string[]
+    providerPools: Record<string, string>
+    referenceCatalog: string
+    quota: Required<NonNullable<RoutingOptions["quota"]>>
+    thresholds: Required<NonNullable<RoutingOptions["thresholds"]>>
   }
   autoMode: {
     enabled: boolean
@@ -144,6 +187,11 @@ export interface JevResponse {
 }
 
 export interface RouteClassification {
+  /**
+   * Task-complexity signal only. It no longer names a model: the router reads
+   * it together with `deepReasoning`, `highRisk` and `research` to pick a
+   * capability tier and a reasoning-effort ceiling.
+   */
   complexity: "fast" | "normal" | "deep"
   complexityProbability: number
   deepReasoning: number
@@ -168,10 +216,10 @@ export interface PermissionSignals {
 
 export interface SessionRuntimeState {
   task?: string
+  /** Whether the V1 adapter is currently steering the model. */
   routerActive: boolean
   lastRoutedModel?: ModelRef
   turnModel?: ModelRef
-  routedTier?: ModelTier
   /** Last model observed for the session (v2 context hook mirror). */
   mirrorModel?: ModelRef
   /** Whether the last model switch was performed by the router. */

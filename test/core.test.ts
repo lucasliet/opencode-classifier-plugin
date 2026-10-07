@@ -1,32 +1,33 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { readFileSync, rmSync } from "node:fs"
 
+import type { Hooks } from "@opencode-ai/plugin"
 import {
   VIRTUAL_MODEL_REF,
   parseModelRef,
   resolveOptions,
 } from "../src/config.ts"
-import { chooseTier, classifyPermission } from "../src/classifier.ts"
+import { classifyPermission, requirementsFromRoute } from "../src/classifier.ts"
 import { filterLargeToolContext, filterText } from "../src/context.ts"
 import { JevClient } from "../src/jev.ts"
+import type {
+  ActiveSubscription,
+  PoolPressure,
+  QuotaLedger,
+  QuotaPoolState,
+} from "../src/routing/contracts.ts"
 import {
   OpenCodeClassifierPlugin,
   installVirtualProvider,
+  snapshotModelInventory,
 } from "../src/v1.ts"
 import { decidePermission } from "../src/permission.ts"
 import { eventSessionID } from "../src/runtime.ts"
+import type { RouteClassification } from "../src/types.ts"
 
 function options(extra: Record<string, unknown> = {}) {
-  return resolveOptions({
-    router: {
-      models: {
-        fast: "opencode-go/glm-5.3-flash",
-        normal: "opencode-go/gpt-5.6-luna",
-        deep: "opencode/gpt-5.6-sol",
-      },
-    },
-    ...extra,
-  })
+  return resolveOptions(extra)
 }
 
 function safeSignals(overrides: Record<string, number> = {}) {
@@ -72,6 +73,29 @@ function routeResponse(
     }
   }
   return { answers }
+}
+
+function routeClassification(
+  overrides: Partial<RouteClassification> = {},
+): RouteClassification {
+  return {
+    complexity: "normal",
+    complexityProbability: 0.5,
+    deepReasoning: 0.1,
+    highRisk: 0.1,
+    research: 0.1,
+    ...overrides,
+  }
+}
+
+function taskEstimates() {
+  return {
+    estimatedInputTokens: 4_000,
+    estimatedOutputTokens: 1_000,
+    needsTools: true,
+    needsVision: false,
+    estimatedTurns: 3,
+  }
 }
 
 function permissionResponse(overrides: Record<string, number> = {}) {
@@ -162,6 +186,155 @@ async function withFetch<T>(
   }
 }
 
+function routeHandler(
+  complexity: "fast" | "normal" | "deep" = "normal",
+): typeof fetch {
+  return (async () =>
+    new Response(JSON.stringify(routeResponse(complexity, 0.95)), {
+      status: 200,
+    })) as typeof fetch
+}
+
+interface FakeQuotaPool {
+  poolID: string
+  usedPercent: number | null
+}
+
+/** What `ai-usagebar` reports by default: Codex by OAuth, Go and Z.AI by key. */
+const DEFAULT_SUBSCRIPTIONS: readonly ActiveSubscription[] = [
+  { id: "openai", label: "Codex (ChatGPT Team)", requireOAuth: true },
+  { id: "opencode-go", label: "OpenCode Go", requireOAuth: false },
+  { id: "zai", label: "Z.AI (GLM Coding Pro)", requireOAuth: false },
+]
+
+function fakeQuotaLedger(
+  pools: readonly FakeQuotaPool[],
+  subscriptions: readonly ActiveSubscription[] = DEFAULT_SUBSCRIPTIONS,
+): QuotaLedger {
+  const states: QuotaPoolState[] = pools.map((pool): QuotaPoolState => {
+    const used = pool.usedPercent
+    const status =
+      used === null ? "unknown" : used >= 100 ? "exhausted" : "available"
+    return {
+      poolID: pool.poolID,
+      label: pool.poolID,
+      status,
+      windows:
+        used === null
+          ? []
+          : [
+              {
+                id: "weekly",
+                label: "weekly",
+                windowSecs: null,
+                usedPercent: used,
+                resetsAt: null,
+                dimension: "inference",
+              },
+            ],
+      fetchedAt: null,
+      error: null,
+    }
+  })
+
+  const pressure = (poolID: string): PoolPressure => {
+    const state = states.find((entry) => entry.poolID === poolID)
+    const worst = state?.windows[0]?.usedPercent ?? null
+    const known =
+      state !== undefined && state.status !== "unknown" && worst !== null
+    return {
+      poolID,
+      known,
+      worstUsedPercent: worst,
+      headroomRatio: known ? Math.max(0, 1 - (worst ?? 0) / 100) : null,
+      status: state?.status ?? "unknown",
+      nextResetAt: null,
+    }
+  }
+
+  return {
+    pools: () => states,
+    pool: (poolID) => states.find((entry) => entry.poolID === poolID),
+    pressure,
+    subscriptions: () => subscriptions,
+    refresh: async () => {},
+    dispose: () => {},
+  }
+}
+
+function hostProviderConfig(
+  providers: Record<string, string[]>,
+): Record<string, unknown> {
+  const provider: Record<string, unknown> = {}
+  for (const [providerID, modelIDs] of Object.entries(providers)) {
+    provider[providerID] = {
+      npm: "@ai-sdk/openai-compatible",
+      name: providerID,
+      options: {},
+      models: Object.fromEntries(
+        modelIDs.map((modelID) => [modelID, { name: modelID }]),
+      ),
+    }
+  }
+  return { provider }
+}
+
+async function routingHarness(options: {
+  providers: Record<string, string[]>
+  pools?: readonly FakeQuotaPool[]
+  plugin?: Record<string, unknown>
+  ledger?: QuotaLedger
+}) {
+  const config = hostProviderConfig(options.providers)
+  const ledger = options.ledger ?? fakeQuotaLedger(options.pools ?? [])
+  const mock = pluginInput()
+  const plugin = options.plugin ?? {}
+  const hooks = await OpenCodeClassifierPlugin(
+    mock.input,
+    {
+      decision: { apiKey: "test", retries: 0 },
+      ...plugin,
+      routing: {
+        referenceCatalog: "/nonexistent/opencode/models.json",
+        ...(plugin.routing as Record<string, unknown> | undefined),
+      },
+    },
+    { createLedger: () => ledger },
+  )
+  await hooks.config?.(config as never)
+  return { config, hooks, ledger, mock }
+}
+
+function virtualTurn(text = "fix the bug") {
+  const output = userOutput("jev-model-router", "auto", text)
+  output.message.model.variant = "max"
+  return output
+}
+
+async function sendTurn(
+  hooks: Hooks,
+  providerID: string,
+  modelID: string,
+  text: string,
+) {
+  const output = userOutput(providerID, modelID, text)
+  await hooks["chat.message"]?.({ sessionID: "ses_1" } as never, output)
+  return output
+}
+
+async function collectDirective(
+  hooks: Hooks,
+  providerID: string,
+  modelID: string,
+): Promise<string> {
+  const system: string[] = []
+  await hooks["experimental.chat.system.transform"]?.(
+    { sessionID: "ses_1", model: { providerID, id: modelID } } as never,
+    { system } as never,
+  )
+  return system.join("\n")
+}
+
 test("virtual model ref is stable", () => {
   assert.equal(VIRTUAL_MODEL_REF, "jev-model-router/auto")
 })
@@ -174,78 +347,119 @@ test("parseModelRef preserves nested ids and variants", () => {
   })
 })
 
-test("configuration rejects recursive router models", () => {
-  assert.throws(
-    () =>
-      resolveOptions({
-        router: {
-          models: {
-            fast: VIRTUAL_MODEL_REF,
-            normal: "opencode-go/gpt-5.6-luna",
-            deep: "opencode/gpt-5.6-sol",
-          },
-        },
-      }),
-    /cannot point back/,
+test("configuration resolves zero-config routing without a router block", () => {
+  const resolved = resolveOptions({})
+  assert.equal(resolved.routing.enabled, true)
+  assert.equal(resolved.routing.safetyMargin, 0.1)
+  assert.deepEqual(resolved.routing.exclude, [])
+  assert.deepEqual(resolved.routing.quota, {
+    enabled: true,
+    binary: "ai-usagebar",
+    args: ["usage", "--json"],
+    vendorArgs: ["vendors", "--json"],
+    timeoutMs: 8_000,
+    refreshSeconds: 120,
+  })
+  assert.deepEqual(resolved.routing.thresholds, {
+    fastChoice: 0.72,
+    deepChoice: 0.58,
+    deepReasoning: 0.72,
+    highRisk: 0.72,
+  })
+})
+
+test("configuration clamps routing safety margin and quota refresh window", () => {
+  const clamped = resolveOptions({
+    routing: { safetyMargin: 5, quota: { refreshSeconds: 1 } },
+  })
+  const floored = resolveOptions({
+    routing: { safetyMargin: -2, quota: { refreshSeconds: 99_999 } },
+  })
+  assert.equal(clamped.routing.safetyMargin, 0.9)
+  assert.equal(clamped.routing.quota.refreshSeconds, 30)
+  assert.equal(floored.routing.safetyMargin, 0)
+  assert.equal(floored.routing.quota.refreshSeconds, 3_600)
+})
+
+test("requirements map confident mechanical work to the economy tier", () => {
+  const requirements = requirementsFromRoute(
+    routeClassification({ complexity: "fast", complexityProbability: 0.9 }),
+    options(),
+    taskEstimates(),
   )
+  assert.equal(requirements.tier, "economy")
+  assert.equal(requirements.maxEffort, "low")
+  assert.equal(requirements.needsReasoning, false)
+  assert.equal(requirements.complexity, "fast")
+  assert.equal(requirements.needsTools, true)
+  assert.equal(requirements.estimatedTurns, 3)
+  assert.equal(requirements.prefersSpeed, true)
 })
 
-test("configuration resolves router efforts by tier", () => {
-  // Given
-  const options = resolveOptions({
-    router: {
-      models: {
-        fast: "p/fast",
-        normal: "p/normal",
-        deep: "p/deep",
-      },
-      efforts: {
-        fast: "low",
-        normal: "medium",
-        deep: "high",
-      },
-    },
-  })
-
-  // When
-  const efforts = options.router.efforts
-
-  // Then
-  assert.deepEqual(efforts, {
-    fast: "low",
-    normal: "medium",
-    deep: "high",
-  })
+test("requirements map uncertain work to the balanced tier", () => {
+  const requirements = requirementsFromRoute(
+    routeClassification({ complexity: "fast", complexityProbability: 0.4 }),
+    options(),
+    taskEstimates(),
+  )
+  assert.equal(requirements.tier, "balanced")
+  assert.equal(requirements.maxEffort, "high")
+  assert.equal(requirements.needsReasoning, true)
+  assert.equal(requirements.prefersSpeed, false)
 })
 
-test("chooseTier promotes deep reasoning and selects confident fast", () => {
+test("requirements promote deep complexity, deep reasoning and high risk to the advanced tier", () => {
   const configured = options()
-  assert.equal(
-    chooseTier(
-      {
-        complexity: "normal",
-        complexityProbability: 0.8,
-        deepReasoning: 0.95,
-        highRisk: 0.1,
-        research: 0.1,
-      },
-      configured,
-    ),
-    "deep",
+  const deepComplexity = requirementsFromRoute(
+    routeClassification({ complexity: "deep", complexityProbability: 0.9 }),
+    configured,
+    taskEstimates(),
   )
-  assert.equal(
-    chooseTier(
-      {
-        complexity: "fast",
-        complexityProbability: 0.95,
-        deepReasoning: 0.1,
-        highRisk: 0.1,
-        research: 0,
-      },
-      configured,
-    ),
-    "fast",
+  const deepReasoning = requirementsFromRoute(
+    routeClassification({ deepReasoning: 0.8 }),
+    configured,
+    taskEstimates(),
   )
+  const highRisk = requirementsFromRoute(
+    routeClassification({ highRisk: 0.75 }),
+    configured,
+    taskEstimates(),
+  )
+  assert.equal(deepComplexity.tier, "advanced")
+  assert.equal(deepComplexity.maxEffort, "max")
+  assert.equal(deepComplexity.needsReasoning, true)
+  assert.equal(deepComplexity.prefersSpeed, false)
+  assert.equal(deepReasoning.tier, "advanced")
+  assert.equal(highRisk.tier, "advanced")
+})
+
+test("research raises the effort ceiling by one step and never past max", () => {
+  const configured = options()
+  const belowBump = requirementsFromRoute(
+    routeClassification({ complexity: "fast", complexityProbability: 0.9, research: 0.2 }),
+    configured,
+    taskEstimates(),
+  )
+  const economyWithResearch = requirementsFromRoute(
+    routeClassification({ complexity: "fast", complexityProbability: 0.9, research: 0.9 }),
+    configured,
+    taskEstimates(),
+  )
+  const balancedWithResearch = requirementsFromRoute(
+    routeClassification({ research: 0.9 }),
+    configured,
+    taskEstimates(),
+  )
+  const advancedWithResearch = requirementsFromRoute(
+    routeClassification({ complexity: "deep", complexityProbability: 0.9, research: 0.9 }),
+    configured,
+    taskEstimates(),
+  )
+  assert.equal(belowBump.maxEffort, "low")
+  assert.equal(economyWithResearch.tier, "economy")
+  assert.equal(economyWithResearch.maxEffort, "medium")
+  assert.equal(balancedWithResearch.maxEffort, "max")
+  assert.equal(advancedWithResearch.maxEffort, "max")
 })
 
 test("permission policy allows read-only and reversible local changes", () => {
@@ -286,13 +500,6 @@ test("permission policy escalates outside-workspace and VCS-history risk", () =>
 test("permission policy escalates command deny rules to ask instead of denying", () => {
   // Given
   const configured = resolveOptions({
-    router: {
-      models: {
-        fast: "p/fast",
-        normal: "p/normal",
-        deep: "p/deep",
-      },
-    },
     autoMode: {
       commandRules: {
         deny: ["git push *"],
@@ -314,13 +521,6 @@ test("permission policy escalates command deny rules to ask instead of denying",
 test("permission policy keeps explicit command ask rules as user checkpoints", () => {
   // Given
   const configured = resolveOptions({
-    router: {
-      models: {
-        fast: "p/fast",
-        normal: "p/normal",
-        deep: "p/deep",
-      },
-    },
     autoMode: {
       commandRules: {
         ask: ["npm publish"],
@@ -609,135 +809,265 @@ test("config hook installs selectable jev model router provider", () => {
   )
 })
 
-test("chat.message activates sticky routing and a different manual model disables it", async () => {
-  const mock = pluginInput()
-  let routeCalls = 0
+test("config hook snapshots every provider except the virtual router", () => {
+  const config = hostProviderConfig({
+    "opencode-go": ["glm-5.3", "glm-5.3-flash"],
+    zcode: ["glm-5.3"],
+    openai: ["gpt-6.1-sol"],
+    opencode: ["gpt-5.6"],
+  })
+  installVirtualProvider(config as never)
 
-  await withFetch(
-    (async () => {
-      routeCalls += 1
-      return new Response(JSON.stringify(routeResponse("fast")), {
-        status: 200,
-      })
-    }) as typeof fetch,
-    async () => {
-      const hooks = await OpenCodeClassifierPlugin(mock.input, {
-        decision: { apiKey: "test", retries: 0 },
-        router: {
-          sticky: true,
-          models: {
-            fast: "opencode-go/glm-5.3-flash",
-            normal: "opencode-go/gpt-5.6-luna",
-            deep: "opencode/gpt-5.6-sol",
-          },
-        },
-      })
-
-      const activated = userOutput()
-      await hooks["chat.message"]?.({ sessionID: "ses_1" } as any, activated)
-      assert.deepEqual(activated.message.model, {
-        providerID: "opencode-go",
-        modelID: "glm-5.3-flash",
-      })
-
-      const restoredByTui = userOutput("opencode-go", "glm-5.3-flash")
-      await hooks["chat.message"]?.(
-        { sessionID: "ses_1" } as any,
-        restoredByTui,
-      )
-      assert.deepEqual(restoredByTui.message.model, {
-        providerID: "opencode-go",
-        modelID: "glm-5.3-flash",
-      })
-      assert.equal(routeCalls, 2)
-
-      let unexpectedCalls = 0
-      const original = globalThis.fetch
-      globalThis.fetch = (async () => {
-        unexpectedCalls += 1
-        throw new Error("should not classify")
-      }) as typeof fetch
-      try {
-        const manual = userOutput("opencode-go", "gpt-5.6-luna")
-        await hooks["chat.message"]?.({ sessionID: "ses_1" } as any, manual)
-        assert.deepEqual(manual.message.model, {
-          providerID: "opencode-go",
-          modelID: "gpt-5.6-luna",
-        })
-        assert.equal(unexpectedCalls, 0)
-      } finally {
-        globalThis.fetch = original
-      }
-    },
-  )
+  const snapshot = snapshotModelInventory(config)
+  assert.deepEqual([...(snapshot.get("opencode-go") ?? [])], [
+    "glm-5.3",
+    "glm-5.3-flash",
+  ])
+  assert.deepEqual([...(snapshot.get("zcode") ?? [])], ["glm-5.3"])
+  assert.deepEqual([...(snapshot.get("openai") ?? [])], ["gpt-6.1-sol"])
+  assert.deepEqual([...(snapshot.get("opencode") ?? [])], ["gpt-5.6"])
+  assert.equal(snapshot.has("jev-model-router"), false)
 })
 
-test("router uses configured fallback when Jev is unavailable", async () => {
-  const mock = pluginInput()
-  await withFetch(
-    (async () => {
-      throw new TypeError("network down")
-    }) as typeof fetch,
-    async () => {
-      const hooks = await OpenCodeClassifierPlugin(mock.input, {
-        decision: { apiKey: "test", retries: 0 },
-        router: {
-          fallbackTier: "normal",
-          models: {
-            fast: "p/fast",
-            normal: "p/normal",
-            deep: "p/deep",
-          },
-        },
-      })
+test("model inventory snapshot tolerates malformed config shapes", () => {
+  assert.equal(snapshotModelInventory({}).size, 0)
+  assert.equal(snapshotModelInventory({ provider: null }).size, 0)
+  assert.equal(snapshotModelInventory(undefined).size, 0)
 
-      const output = userOutput()
-      await hooks["chat.message"]?.({ sessionID: "ses_1" } as any, output)
-      assert.deepEqual(output.message.model, {
-        providerID: "p",
-        modelID: "normal",
-      })
-    },
-  )
+  const weird = hostProviderConfig({ zcode: ["glm-5.3"] })
+  ;(weird as any).provider.zcode = {
+    models: { "glm-5.3": {}, "  ": {}, "not-an-entry": 42 },
+  }
+  const snapshot = snapshotModelInventory(weird)
+  assert.deepEqual([...(snapshot.get("zcode") ?? [])], ["glm-5.3"])
 })
 
-test("router applies the configured effort to the selected model", async () => {
-  // Given
+test("disabling routing skips the virtual provider install", async () => {
   const mock = pluginInput()
-  const output = userOutput()
+  const hooks = await OpenCodeClassifierPlugin(mock.input, {
+    routing: { enabled: false },
+  })
+  const config = hostProviderConfig({ "opencode-go": ["glm-5.3"] })
 
-  await withFetch(
-    (async () =>
-      new Response(JSON.stringify(routeResponse("deep")), {
-        status: 200,
-      })) as typeof fetch,
-    async () => {
-      const hooks = await OpenCodeClassifierPlugin(mock.input, {
-        decision: { apiKey: "test", retries: 0 },
-        router: {
-          models: {
-            fast: "p/fast#embedded",
-            normal: "p/normal",
-            deep: "p/deep",
-          },
-          efforts: {
-            deep: "high",
-          },
-        },
-      })
+  await hooks.config?.(config as never)
 
-      // When
-      await hooks["chat.message"]?.({ sessionID: "ses_1" } as any, output)
-    },
-  )
+  assert.equal((config as any).provider["jev-model-router"], undefined)
+})
 
-  // Then
-  assert.deepEqual(output.message.model, {
-    providerID: "p",
-    modelID: "deep",
-    variant: "high",
+test("chat.message routes a virtual turn to a subscription model and drops the stale variant", async () => {
+  await withFetch(routeHandler("normal"), async () => {
+    const { hooks } = await routingHarness({
+      providers: {
+        "opencode-go": ["glm-5.3", "glm-5.3-flash"],
+        zcode: ["glm-5.3"],
+      },
+    })
+
+    const output = virtualTurn()
+    await hooks["chat.message"]?.({ sessionID: "ses_1" } as never, output)
+
+    const providerID = output.message.model.providerID
+    assert.ok(
+      providerID === "opencode-go" || providerID === "zcode",
+      `expected a subscription provider, got ${String(providerID)}`,
+    )
+    assert.equal(output.message.model.variant, undefined)
+
+    const guidance = await collectDirective(
+      hooks,
+      providerID,
+      output.message.model.modelID,
+    )
+    assert.match(guidance, /Classifier guidance:/)
+    assert.match(guidance, /(opencode-go|zcode)\//)
   })
 })
+
+test("OAuth-bound subscriptions are excluded on V1 with a trace line", async () => {
+  const logPath = "/tmp/opencode/core.test.v1-trace.log"
+  rmSync(logPath, { force: true })
+  const previousLog = process.env.OPENCODE_CLASSIFIER_LOG
+  process.env.OPENCODE_CLASSIFIER_LOG = logPath
+
+  try {
+    await withFetch(routeHandler("normal"), async () => {
+      const { hooks } = await routingHarness({
+        providers: { openai: ["gpt-6.1-sol"], zcode: ["glm-5.3"] },
+      })
+
+      const output = virtualTurn()
+      await hooks["chat.message"]?.({ sessionID: "ses_1" } as never, output)
+
+      assert.equal(output.message.model.providerID, "zcode")
+      assert.equal(output.message.model.modelID, "glm-5.3")
+
+      const excluded = readFileSync(logPath, "utf8")
+        .split("\n")
+        .filter((line) => line.includes("v1 subscription association"))
+      assert.equal(excluded.length, 1)
+      assert.match(excluded.join("\n"), /openai:openai/)
+    })
+  } finally {
+    if (previousLog === undefined) delete process.env.OPENCODE_CLASSIFIER_LOG
+    else process.env.OPENCODE_CLASSIFIER_LOG = previousLog
+  }
+})
+
+test("a pay-as-you-go provider in the config is never routed to", async () => {
+  await withFetch(routeHandler("normal"), async () => {
+    const { hooks } = await routingHarness({
+      providers: { opencode: ["gpt-5.6"], "opencode-go": ["glm-5.3-flash"] },
+    })
+
+    const output = virtualTurn()
+    await hooks["chat.message"]?.({ sessionID: "ses_1" } as never, output)
+
+    assert.equal(output.message.model.providerID, "opencode-go")
+    assert.equal(output.message.model.modelID, "glm-5.3-flash")
+  })
+})
+
+test("zero verifiable subscription models leave the turn untouched with a manual-pick directive", async () => {
+  await withFetch(routeHandler("normal"), async () => {
+    const { hooks } = await routingHarness({
+      providers: { opencode: ["gpt-5.6"], openai: ["gpt-6.1-sol"] },
+    })
+
+    const output = virtualTurn()
+    await hooks["chat.message"]?.({ sessionID: "ses_1" } as never, output)
+
+    assert.equal(output.message.model.providerID, "jev-model-router")
+    assert.equal(output.message.model.modelID, "auto")
+    assert.equal(output.message.model.variant, "max")
+
+    const guidance = await collectDirective(hooks, "jev-model-router", "auto")
+    assert.match(guidance, /Select a model manually/)
+  })
+})
+
+test("sticky continuation keeps routing on the chosen model and disarms on a manual override", async () => {
+  await withFetch(routeHandler("normal"), async () => {
+    const { hooks } = await routingHarness({
+      providers: { "opencode-go": ["glm-5.3"], zcode: ["glm-5.3"] },
+      pools: [
+        { poolID: "opencode-go", usedPercent: 10 },
+        { poolID: "zai", usedPercent: 10 },
+      ],
+    })
+
+    const first = virtualTurn()
+    await hooks["chat.message"]?.({ sessionID: "ses_1" } as never, first)
+    const target = first.message.model
+    assert.notEqual(target.providerID, "jev-model-router")
+
+    const second = await sendTurn(
+      hooks,
+      target.providerID,
+      target.modelID,
+      "and then finish it",
+    )
+    assert.equal(second.message.model.providerID, target.providerID)
+    assert.equal(second.message.model.modelID, target.modelID)
+
+    const manual = await sendTurn(hooks, "opencode", "gpt-5.6", "manual choice")
+    assert.deepEqual(manual.message.model, {
+      providerID: "opencode",
+      modelID: "gpt-5.6",
+    })
+  })
+})
+
+test("an exhausted quota pool steers the turn to another subscription model", async () => {
+  await withFetch(routeHandler("normal"), async () => {
+    const { hooks } = await routingHarness({
+      providers: { "opencode-go": ["glm-5.3"], zcode: ["glm-5.3"] },
+      pools: [
+        { poolID: "opencode-go", usedPercent: 100 },
+        { poolID: "zai", usedPercent: 4 },
+      ],
+    })
+
+    const output = virtualTurn()
+    await hooks["chat.message"]?.({ sessionID: "ses_1" } as never, output)
+
+    assert.equal(output.message.model.providerID, "zcode")
+    assert.equal(output.message.model.modelID, "glm-5.3")
+
+    const guidance = await collectDirective(hooks, "zcode", "glm-5.3")
+    assert.match(guidance, /opencode-go exhausted/)
+  })
+})
+
+test("routing relaxes the quality floor by one band when no model meets it", async () => {
+  await withFetch(routeHandler("deep"), async () => {
+    const { hooks } = await routingHarness({
+      providers: { "opencode-go": ["glm-5.3-flash"] },
+    })
+
+    const output = virtualTurn()
+    await hooks["chat.message"]?.({ sessionID: "ses_1" } as never, output)
+
+    assert.equal(output.message.model.providerID, "opencode-go")
+    assert.equal(output.message.model.modelID, "glm-5.3-flash")
+  })
+})
+
+test("a failed Jev classification still routes with balanced defaults", async () => {
+  await withFetch(
+    (async () => new Response("server exploded", { status: 500 })) as typeof fetch,
+    async () => {
+      const { hooks } = await routingHarness({
+        providers: { "opencode-go": ["glm-5.3-flash"] },
+      })
+
+      const output = virtualTurn()
+      await hooks["chat.message"]?.({ sessionID: "ses_1" } as never, output)
+
+      assert.equal(output.message.model.providerID, "opencode-go")
+
+      const guidance = await collectDirective(
+        hooks,
+        output.message.model.providerID,
+        output.message.model.modelID,
+      )
+      assert.match(guidance, /classification failed/i)
+    },
+  )
+})
+
+test("disabling the quota ledger still routes under unknown quota", async () => {
+  await withFetch(routeHandler("normal"), async () => {
+    const { hooks } = await routingHarness({
+      providers: { "opencode-go": ["glm-5.3-flash"] },
+      plugin: { routing: { quota: { enabled: false } } },
+    })
+
+    const output = virtualTurn()
+    await hooks["chat.message"]?.({ sessionID: "ses_1" } as never, output)
+
+    assert.equal(output.message.model.providerID, "opencode-go")
+  })
+})
+
+test("dispose disposes the quota ledger", async () => {
+  let disposed = false
+  const base = fakeQuotaLedger([])
+  const tracked: QuotaLedger = {
+    ...base,
+    dispose: () => {
+      disposed = true
+    },
+  }
+  const { hooks } = await routingHarness({
+    providers: { "opencode-go": ["glm-5.3"] },
+    ledger: tracked,
+  })
+
+  await hooks.dispose?.()
+
+  assert.equal(disposed, true)
+})
+
 
 test("agent routing works with a manually selected real model", async () => {
   const mock = pluginInput()
@@ -750,7 +1080,6 @@ test("agent routing works with a manually selected real model", async () => {
     async () => {
       const hooks = await OpenCodeClassifierPlugin(mock.input, {
         decision: { apiKey: "test", retries: 0 },
-        router: { enabled: false },
         agents: {
           enabled: true,
           minimumProbability: 0.8,
@@ -780,7 +1109,6 @@ test("Auto Mode allows safe permission requests and keeps risky requests as ask"
     async () => {
       const hooks = await OpenCodeClassifierPlugin(mock.input, {
         decision: { apiKey: "test", retries: 0 },
-        router: { enabled: false },
       })
 
       const safe = { status: "ask" as const }
@@ -812,7 +1140,6 @@ test("Auto Mode allows safe permission requests and keeps risky requests as ask"
     async () => {
       const hooks = await OpenCodeClassifierPlugin(risky.input, {
         decision: { apiKey: "test", retries: 0 },
-        router: { enabled: false },
       })
 
       const request = { status: "ask" as const }
@@ -845,7 +1172,6 @@ test("Auto Mode preserves an explicitly allowed permission without calling Jev",
     async () => {
       const hooks = await OpenCodeClassifierPlugin(mock.input, {
         decision: { apiKey: "test", retries: 0 },
-        router: { enabled: false },
       })
 
       const request = { status: "allow" as const }
@@ -879,7 +1205,6 @@ test("Auto Mode keeps high-risk permissions available for human approval", async
     async () => {
       const hooks = await OpenCodeClassifierPlugin(mock.input, {
         decision: { apiKey: "test", retries: 0 },
-        router: { enabled: false },
         autoMode: { denyHighRisk: true },
       })
 
@@ -915,7 +1240,6 @@ test("Auto Mode responds to the host permission.asked event", async () => {
     async () => {
       const hooks = await OpenCodeClassifierPlugin(mock.input, {
         decision: { apiKey: "test", retries: 0 },
-        router: { enabled: false },
       })
 
       await hooks.event?.({
@@ -963,7 +1287,6 @@ test("Auto Mode replies through the host SDK session permission API", async () =
     async () => {
       const hooks = await OpenCodeClassifierPlugin(mock.input, {
         decision: { apiKey: "test", retries: 0 },
-        router: { enabled: false },
       })
 
       await hooks.event?.({
@@ -1011,7 +1334,6 @@ test("Auto Mode falls back to HTTP when the host client reply fails", async () =
     async () => {
       const hooks = await OpenCodeClassifierPlugin(mock.input, {
         decision: { apiKey: "test", retries: 0 },
-        router: { enabled: false },
       })
 
       await hooks.event?.({
@@ -1058,7 +1380,6 @@ test("Auto Mode falls back to the legacy permission reply endpoint", async () =>
     async () => {
       const hooks = await OpenCodeClassifierPlugin(mock.input, {
         decision: { apiKey: "test", retries: 0 },
-        router: { enabled: false },
       })
 
       await hooks.event?.({
@@ -1108,7 +1429,6 @@ test("Auto Mode does not reject a high-risk host permission event", async () => 
     async () => {
       const hooks = await OpenCodeClassifierPlugin(mock.input, {
         decision: { apiKey: "test", retries: 0 },
-        router: { enabled: false },
         autoMode: { denyHighRisk: true },
       })
 

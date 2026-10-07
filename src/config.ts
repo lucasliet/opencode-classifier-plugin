@@ -1,4 +1,5 @@
-import type { ModelRef, ModelTier, PluginOptions, ResolvedOptions } from "./types.ts"
+import { defaultReferencePath, expandHome } from "./routing/reference.ts"
+import type { ModelRef, PluginOptions, ResolvedOptions } from "./types.ts"
 
 export const VIRTUAL_PROVIDER_ID = "jev-model-router"
 export const VIRTUAL_PROVIDER_NAME = "jev model router"
@@ -8,6 +9,9 @@ export const VIRTUAL_MODEL_REF = `${VIRTUAL_PROVIDER_ID}/${VIRTUAL_MODEL_ID}`
 
 const DEFAULT_ENDPOINT = "https://opencode.ai/zen/v1/systemone"
 const DEFAULT_JEV_MODEL = "jev-1.13-free"
+const DEFAULT_QUOTA_BINARY = "ai-usagebar"
+const DEFAULT_QUOTA_ARGS = ["usage", "--json"]
+const DEFAULT_VENDOR_ARGS = ["vendors", "--json"]
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -47,51 +51,37 @@ function stringList(value: unknown): string[] {
     .map((item) => item.trim())
 }
 
+/** A configured list replaces the default only when it is non-empty. */
+function listOr(value: unknown, fallback: readonly string[]): string[] {
+  const list = stringList(value)
+  return list.length > 0 ? list : [...fallback]
+}
+
+/**
+ * Normalize untrusted plugin options into a fully populated configuration.
+ *
+ * Every option is optional and every unknown value falls back to a default, so
+ * the plugin works with zero configuration. Out-of-range numbers are clamped
+ * instead of rejected, because a misconfigured router should degrade to
+ * default behavior rather than fail the whole host.
+ *
+ * @param raw Untrusted options object handed over by OpenCode.
+ * @returns The resolved configuration used by every other module.
+ * @throws When `autoMode.thresholds.deny` is below `autoMode.thresholds.riskAsk`,
+ * which would silently invert the permission escalation ladder.
+ */
 export function resolveOptions(raw: unknown): ResolvedOptions {
   const source = record(raw) as PluginOptions & Record<string, unknown>
   const decision = record(source.decision)
-  const router = record(source.router)
-  const routerModels = record(router.models)
-  const routerEfforts = record(router.efforts)
-  const routerThresholds = record(router.thresholds)
+  const routing = record(source.routing)
+  const routingQuota = record(routing.quota)
+  const routingThresholds = record(routing.thresholds)
   const autoMode = record(source.autoMode)
   const autoModeCommandRules = record(autoMode.commandRules)
   const autoModeThresholds = record(autoMode.thresholds)
   const agents = record(source.agents)
   const context = record(source.context)
   const privacy = record(source.privacy)
-
-  const routerEnabled = bool(router.enabled, true)
-  const models: Record<ModelTier, string> = {
-    fast: str(routerModels.fast, ""),
-    normal: str(routerModels.normal, ""),
-    deep: str(routerModels.deep, ""),
-  }
-  const efforts: Record<ModelTier, string> = {
-    fast: str(routerEfforts.fast, ""),
-    normal: str(routerEfforts.normal, ""),
-    deep: str(routerEfforts.deep, ""),
-  }
-
-  if (routerEnabled) {
-    for (const tier of ["fast", "normal", "deep"] as const) {
-      if (!models[tier]) {
-        throw new Error(
-          `opencode-classifier-plugin: router.models.${tier} is required when the selectable Jev model router is enabled. See opencode.example.json.`,
-        )
-      }
-      const parsed = parseModelRef(models[tier])
-      if (parsed.providerID === VIRTUAL_PROVIDER_ID && parsed.id === VIRTUAL_MODEL_ID) {
-        throw new Error(
-          `opencode-classifier-plugin: router.models.${tier} cannot point back to ${VIRTUAL_MODEL_REF}.`,
-        )
-      }
-    }
-  }
-
-  const fallbackTierValue = str(router.fallbackTier, "normal")
-  const fallbackTier: ModelTier =
-    fallbackTierValue === "fast" || fallbackTierValue === "deep" ? fallbackTierValue : "normal"
 
   const onErrorValue = str(autoMode.onError, "ask")
   const onError: "ask" | "preserve" = onErrorValue === "preserve" ? "preserve" : "ask"
@@ -107,17 +97,25 @@ export function resolveOptions(raw: unknown): ResolvedOptions {
       timeoutMs: integer(decision.timeoutMs, 8_000, 250, 60_000),
       retries: integer(decision.retries, 1, 0, 5),
     },
-    router: {
-      enabled: routerEnabled,
-      sticky: bool(router.sticky, true),
-      models,
-      efforts,
-      fallbackTier,
+    routing: {
+      enabled: bool(routing.enabled, true),
+      safetyMargin: num(routing.safetyMargin, 0.1, 0, 0.9),
+      exclude: stringList(routing.exclude),
+      providerPools: stringMap(routing.providerPools),
+      referenceCatalog: expandHome(str(routing.referenceCatalog, defaultReferencePath())),
+      quota: {
+        enabled: bool(routingQuota.enabled, true),
+        binary: str(routingQuota.binary, DEFAULT_QUOTA_BINARY),
+        args: listOr(routingQuota.args, DEFAULT_QUOTA_ARGS),
+        vendorArgs: listOr(routingQuota.vendorArgs, DEFAULT_VENDOR_ARGS),
+        timeoutMs: integer(routingQuota.timeoutMs, 8_000, 500, 60_000),
+        refreshSeconds: integer(routingQuota.refreshSeconds, 120, 30, 3_600),
+      },
       thresholds: {
-        fastChoice: num(routerThresholds.fastChoice, 0.72, 0, 1),
-        deepChoice: num(routerThresholds.deepChoice, 0.58, 0, 1),
-        deepReasoning: num(routerThresholds.deepReasoning, 0.72, 0, 1),
-        highRisk: num(routerThresholds.highRisk, 0.72, 0, 1),
+        fastChoice: num(routingThresholds.fastChoice, 0.72, 0, 1),
+        deepChoice: num(routingThresholds.deepChoice, 0.58, 0, 1),
+        deepReasoning: num(routingThresholds.deepReasoning, 0.72, 0, 1),
+        highRisk: num(routingThresholds.highRisk, 0.72, 0, 1),
       },
     },
     autoMode: {
