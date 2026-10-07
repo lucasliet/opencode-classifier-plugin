@@ -1,6 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 import { setupV2 } from "../src/v2.ts"
 import type {
@@ -198,7 +200,7 @@ function glmVariants(): Array<Record<string, unknown>> {
 
 /**
  * One model per interesting provider: an OAuth-gated subscription (openai), a
- * presence-proved subscription (opencode-go, zcode), and a pay-as-you-go
+ * presence-proved subscription (opencode-go, my-glm), and a pay-as-you-go
  * catalog entry (opencode) that must never be routed.
  */
 function defaultCatalog(): unknown[] {
@@ -222,7 +224,7 @@ function defaultCatalog(): unknown[] {
       cost: [{ input: 0.4, output: 2, cache: { read: 0.1, write: 0 } }],
     }),
     hostModel({
-      providerID: "zcode",
+      providerID: "my-glm",
       modelID: "glm-5.3",
       name: "GLM 5.3",
       variants: glmVariants(),
@@ -303,7 +305,10 @@ function fakeQuotaLedger(
 function pluginOptions(extra: Record<string, unknown> = {}) {
   return {
     decision: { apiKey: "test", retries: 0 },
-    routing: { referenceCatalog: "/nonexistent/opencode/models.json" },
+    routing: {
+      referenceCatalog: "/nonexistent/opencode/models.json",
+      providerAliases: { "my-glm": "zai-coding-plan" },
+    },
     agents: { enabled: false },
     context: { enabled: false },
     ...extra,
@@ -327,9 +332,9 @@ async function setupRouted(
  * routing internals (gate exclusions, relaxed floors) without any new seam.
  */
 async function withTraceLog<T>(run: (readTrace: () => string) => Promise<T>): Promise<T> {
-  const path = `/tmp/opencode/v2-test-${process.pid}-${Date.now()}-${Math.random()
+  const path = join(tmpdir(), `v2-test-${process.pid}-${Date.now()}-${Math.random()
     .toString(16)
-    .slice(2)}.log`
+    .slice(2)}.log`)
   const previous = process.env.OPENCODE_CLASSIFIER_LOG
   process.env.OPENCODE_CLASSIFIER_LOG = path
   try {
@@ -565,7 +570,7 @@ test("v2 prompt hook routes a virtual session to a subscription model with a var
         model: { providerID: string; id: string; variant?: string }
       }
       assert.equal(switched.sessionID, "ses_1")
-      assert.equal(switched.model.providerID, "zcode")
+      assert.equal(switched.model.providerID, "my-glm")
       assert.equal(switched.model.id, "glm-5.3")
       assert.equal(switched.model.variant, "low")
     },
@@ -654,7 +659,7 @@ test("v2 prompt hook routes on the first prompt while quota is still unknown", a
 
       assert.equal(mock.switchedModels.length, 1)
       const switched = mock.switchedModels[0] as { model: { providerID: string } }
-      assert.equal(switched.model.providerID, "zcode")
+      assert.equal(switched.model.providerID, "my-glm")
       assert.ok(Date.now() - startedAt < 5_000, "prompt must not block on the quota binary")
     },
   )
@@ -663,7 +668,7 @@ test("v2 prompt hook routes on the first prompt while quota is still unknown", a
 test("v2 prompt hook relaxes the quality floor one band when the floor rejects everything", async () => {
   const mock = mockContext(pluginOptions(), VIRTUAL_MODEL, undefined, {
     catalog: defaultCatalog().filter(
-      (entry) => (entry as Record<string, unknown>).providerID !== "zcode",
+      (entry) => (entry as Record<string, unknown>).providerID !== "my-glm",
     ),
   })
   await withFetch(
@@ -697,7 +702,7 @@ test("v2 prompt hook still routes with a fallback classification when Jev fails"
 
         assert.equal(mock.switchedModels.length, 1)
         const switched = mock.switchedModels[0] as { model: { providerID: string } }
-        assert.equal(switched.model.providerID, "zcode")
+        assert.equal(switched.model.providerID, "my-glm")
         assert.match(readTrace(), /classification failed/)
       })
     },
@@ -852,7 +857,7 @@ test("v2 prompt hook routes a session-level Auto selection before first dispatch
       assert.equal(mock.switchedModels.length, 1)
       const switched = mock.switchedModels[0] as { model: { providerID: string } }
       assert.ok(
-        ["openai", "opencode-go", "zcode"].includes(switched.model.providerID),
+        ["openai", "opencode-go", "my-glm"].includes(switched.model.providerID),
         "expected a subscription provider",
       )
     },
@@ -978,7 +983,7 @@ test("v2 model selection event re-arms routing when Auto is picked again", async
 test("v2 prompt hook never routes a blacklisted provider", async () => {
   const mock = mockContext(
     pluginOptions({
-      routing: { referenceCatalog: "/nonexistent/opencode/models.json", exclude: ["zcode"] },
+      routing: { referenceCatalog: "/nonexistent/opencode/models.json", exclude: ["my-glm"] },
     }),
   )
   await withFetch(
@@ -989,7 +994,7 @@ test("v2 prompt hook never routes a blacklisted provider", async () => {
 
       assert.equal(mock.switchedModels.length, 1)
       const switched = mock.switchedModels[0] as { model: { providerID: string } }
-      assert.notEqual(switched.model.providerID, "zcode")
+      assert.notEqual(switched.model.providerID, "my-glm")
     },
   )
 })
@@ -1008,7 +1013,7 @@ test("v2 prompt hook stops routing to a subscription ai-usagebar no longer repor
       const switched = mock.switchedModels.map(
         (input) => (input as { model: { providerID: string } }).model.providerID,
       )
-      assert.deepEqual(switched, ["zcode"])
+      assert.deepEqual(switched, ["my-glm"])
     },
   )
 })
@@ -1020,7 +1025,7 @@ test("v2 step events persist measured model speed", async () => {
   await mock.emit({
     type: "session.step.started",
     created: 1_000,
-    data: { sessionID: "ses_1", assistantMessageID: "m1", model: { providerID: "zcode", id: "glm-5.3" } },
+    data: { sessionID: "ses_1", assistantMessageID: "m1", model: { providerID: "my-glm", id: "glm-5.3" } },
   })
   await mock.emit({
     type: "session.step.ended",
@@ -1029,7 +1034,7 @@ test("v2 step events persist measured model speed", async () => {
   })
 
   assert.deepEqual(await mock.ctx.storage.get("routing.speed"), {
-    "zcode/glm-5.3": { tokensPerSecond: 100, samples: 1 },
+    "my-glm/glm-5.3": { tokensPerSecond: 100, samples: 1 },
   })
 })
 
@@ -1041,7 +1046,7 @@ test("v2 retry hook fails over to another subscription and keeps the failed prov
       await setupRouted(mock)
       await mock.hooks.prompt[0]?.(promptEvent("fix the typo"))
       const first = (mock.switchedModels[0] as { model: { providerID: string; id: string } }).model
-      assert.equal(first.providerID, "zcode")
+      assert.equal(first.providerID, "my-glm")
 
       const event = {
         sessionID: "ses_1",
@@ -1055,11 +1060,11 @@ test("v2 retry hook fails over to another subscription and keeps the failed prov
 
       assert.deepEqual(event.decision, { retry: true, delay: 0 })
       const second = (mock.switchedModels[1] as { model: { providerID: string } }).model
-      assert.notEqual(second.providerID, "zcode")
+      assert.notEqual(second.providerID, "my-glm")
 
       await mock.hooks.prompt[0]?.(promptEvent("fix another typo"))
       const third = (mock.switchedModels[2] as { model: { providerID: string } }).model
-      assert.notEqual(third.providerID, "zcode")
+      assert.notEqual(third.providerID, "my-glm")
     },
   )
 })

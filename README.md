@@ -129,17 +129,18 @@ quota refresh:
    this order:
    - an explicit `routing.providerPools` entry (`{ "my-proxy": "anthropic" }`);
    - the provider ID contains the vendor ID (`zai-coding-plan` → `zai`,
-     `kimi-code-plan-global` → `kimi`, `github-copilot` → `copilot`). Custom
-     providers that do not carry their vendor's name have a built-in alias:
-     `zcode` is read as `zai-coding-plan` and `grok-build` as `supergrok`.
+     `kimi-code-plan-global` → `kimi`, `github-copilot` → `copilot`). A custom
+     provider that does not carry its vendor's name is read through its
+     `routing.providerAliases` entry (`{ "my-glm": "zai-coding-plan" }`), or
+     placed directly with `routing.providerPools`.
 
    A provider that matches neither is never routed.
 3. **OAuth proof.** When `ai-usagebar vendors --json` says a vendor
    authenticates by OAuth (ChatGPT/Codex, Claude, Copilot), its providers must
    show an OAuth connection: the same provider with an API key is metered and
    is excluded. An unknown kind fails closed to "requires OAuth".
-4. **Blacklist.** `routing.exclude` removes providers (`claude-dipol`) or
-   single models (`zcode/glm-5.3-flash`, `*` wildcards allowed) before
+4. **Blacklist.** `routing.exclude` removes providers (`corp-proxy`) or
+   single models (`zai-coding-plan/glm-5.3-flash`, `*` wildcards allowed) before
    anything else runs. Use it for accounts that must never be spent, such as a
    company subscription.
 
@@ -164,6 +165,10 @@ speed. They come from, in order of precedence:
    plugin times every `session.step.started`/`session.step.ended` pair, keeps a
    moving tokens-per-second average per model, and persists it in the plugin's
    storage. Until five turns are measured the name-based prior is blended in.
+
+A provider listed in `routing.providerAliases` is profiled as the provider it
+stands for, so `{ "my-glm": "zai-coding-plan" }` gives `my-glm/glm-5.3` the
+`zai-coding-plan/glm-5.3` row; measured speed stays keyed by the real provider.
 
 Vendors that publish no dollar allowance are compared through percentage
 pressure only.
@@ -212,8 +217,9 @@ empty `routing` block is a valid, working configuration:
   "routing": {
     "enabled": true,              // default true
     "safetyMargin": 0.10,         // 0..0.9, share of a quota window the router refuses to spend
-    "exclude": ["claude-dipol"],  // providers or provider/model patterns never routed
+    "exclude": ["corp-proxy"],    // providers or provider/model patterns never routed
     "providerPools": {},          // provider ID -> ai-usagebar vendor ID, when matching needs help
+    "providerAliases": {},        // provider ID -> provider ID it stands for (matching and profiles)
     "referenceCatalog": "~/.cache/opencode/models.json", // models.dev cache for derived profiles
     "quota": {
       "enabled": true,            // default true
@@ -604,6 +610,26 @@ Potentially transmitted data:
 
 For zero external classifier traffic, point `decision.endpoint` at a local System One-compatible service.
 
+## Debug log
+
+Trace lines (routing decisions, capability narrowing, failover) are written
+only when a log file is enabled, in this order:
+
+1. `logFile` in the plugin options (`~/` is expanded);
+2. the `OPENCODE_CLASSIFIER_LOG` environment variable;
+3. `$XDG_STATE_HOME/opencode/opencode-classifier-plugin.log` (default
+   `~/.local/state/...`) while `debug` is `true`.
+
+The file and its directory are created private to the user. `debug: true` also
+mirrors trace lines to stderr.
+
+```json
+{
+  "debug": false,
+  "logFile": "~/.local/state/opencode/opencode-classifier-plugin.log"
+}
+```
+
 ## Complete configuration
 
 See:
@@ -721,6 +747,7 @@ opencode-classifier-plugin/
 │   ├── profiles.test.ts
 │   ├── quota.test.ts
 │   ├── subscriptions.test.ts
+│   ├── trace.test.ts
 │   ├── routing.test.ts
 │   ├── v2.test.ts
 │   └── package.test.ts
@@ -759,4 +786,4 @@ opencode-classifier-plugin/
   sticky target.
 - V1 only: selecting a different real model disables sticky routing. Re-selecting the exact same last-routed model cannot be distinguished from the TUI's automatic restoration by the public 1.18 plugin API.
 - V1 only: provider-level retry decisions are left to OpenCode because the public 1.18 plugin API does not expose that internal hook.
-- Connected `/connect` secrets are not read by the plugin; supply the System One credential through `OPENCODE_API_KEY` or `decision.apiKey`.
+- Connected `/connect` secrets are not read by the plugin; supply the System One credential through the environment variable named by `decision.apiKeyEnv` (default `OPENCODE_API_KEY`) or directly with `decision.apiKey`.

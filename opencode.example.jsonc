@@ -16,8 +16,9 @@
           // Optional: zero-config subscription routing works with an empty block.
           "enabled": true
           // "safetyMargin": 0.10,
-          // "exclude": ["claude-dipol", "zcode/*-flash"],
+          // "exclude": ["corp-proxy", "zai-coding-plan/*-flash"],
           // "providerPools": { "my-proxy": "anthropic" },
+          // "providerAliases": { "my-glm": "zai-coding-plan" },
           // "referenceCatalog": "~/.cache/opencode/models.json",
           // "quota": {
           //   "enabled": true,

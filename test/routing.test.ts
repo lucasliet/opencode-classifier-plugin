@@ -338,7 +338,7 @@ test("buildRoutableModels attaches the profile its resolver returns", () => {
 
 test("toCatalogModels keeps the host family and widens a release time in seconds", () => {
   const [model] = toCatalogModels([
-    { ...catalogEntry({ providerID: "zcode", modelID: "glm-5.3" }), family: "glm", time: { released: 1_760_000_000 } },
+    { ...catalogEntry({ providerID: "my-glm", modelID: "glm-5.3" }), family: "glm", time: { released: 1_760_000_000 } },
   ])
   assert.equal(model?.family, "glm")
   assert.equal(model?.releasedAt, 1_760_000_000_000)
@@ -346,11 +346,11 @@ test("toCatalogModels keeps the host family and widens a release time in seconds
 
 test("providerIDsOf lists each provider once and skips fully blacklisted ones", () => {
   const catalog = toCatalogModels([
-    catalogEntry({ providerID: "zcode", modelID: "glm-5.3" }),
-    catalogEntry({ providerID: "zcode", modelID: "glm-5.3-flash" }),
-    catalogEntry({ providerID: "claude-dipol", modelID: "claude-opus-5-5" }),
+    catalogEntry({ providerID: "my-glm", modelID: "glm-5.3" }),
+    catalogEntry({ providerID: "my-glm", modelID: "glm-5.3-flash" }),
+    catalogEntry({ providerID: "corp-proxy", modelID: "claude-opus-5-5" }),
   ])
-  assert.deepEqual(providerIDsOf(catalog, compileExclusions(["claude-dipol"])), ["zcode"])
+  assert.deepEqual(providerIDsOf(catalog, compileExclusions(["corp-proxy"])), ["my-glm"])
 })
 
 test("selectModel rejects a model without tool support", () => {
@@ -905,10 +905,10 @@ test("a weekly pool on pace beats a monthly pool that is running ahead of its pa
     route: { id: "cursor", poolID: "cursor", providerIDs: ["cursor"], usageEntryIDs: ["cursor"] },
   })
   const weekly = routable({
-    providerID: "zcode",
+    providerID: "my-glm",
     modelID: "glm-5.3",
     tier: "advanced",
-    route: { id: "zai", poolID: "zai", providerIDs: ["zcode"], usageEntryIDs: ["zai"] },
+    route: { id: "zai", poolID: "zai", providerIDs: ["my-glm"], usageEntryIDs: ["zai"] },
   })
   const ledger = ledgerOf(
     { poolID: "cursor", windows: [{ label: "Cursor Models", usedPercent: 30, windowSecs: MONTH_SECS, resetsAt: new Date(PACE_NOW + 28 * 86_400_000).toISOString() }] },
@@ -922,5 +922,5 @@ test("a weekly pool on pace beats a monthly pool that is running ahead of its pa
     now: PACE_NOW,
   })
 
-  assert.equal(decision.selected?.ref, "zcode/glm-5.3")
+  assert.equal(decision.selected?.ref, "my-glm/glm-5.3")
 })

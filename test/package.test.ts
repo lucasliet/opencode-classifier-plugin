@@ -72,7 +72,7 @@ test("routing options parse and clamp out-of-range values", () => {
     routing: {
       enabled: false,
       safetyMargin: 5,
-      exclude: ["claude-dipol", " ", 3],
+      exclude: ["corp-proxy", " ", 3],
       providerPools: { "my-proxy": "anthropic", bad: 1 },
       referenceCatalog: "/tmp/models.json",
       quota: {
@@ -86,7 +86,7 @@ test("routing options parse and clamp out-of-range values", () => {
   })
 
   assert.equal(resolved.routing.enabled, false)
-  assert.deepEqual(resolved.routing.exclude, ["claude-dipol"])
+  assert.deepEqual(resolved.routing.exclude, ["corp-proxy"])
   assert.deepEqual(resolved.routing.providerPools, { "my-proxy": "anthropic" })
   assert.equal(resolved.routing.referenceCatalog, "/tmp/models.json")
   assert.equal(

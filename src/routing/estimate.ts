@@ -85,8 +85,8 @@ interface BurnRates {
  *
  * When the selector emits no variant the host runs the model on its own
  * default gear, which plugins and providers are free to set to their most
- * expensive reasoning level (for example the zcode provider defaults GLM to
- * `max`). That default is invisible to this package, so the estimate must be
+ * expensive reasoning level (for example a custom provider that defaults GLM
+ * to `max`). That default is invisible to this package, so the estimate must be
  * conservative: a model that exposes any priced gear is costed at its most
  * expensive one. Underestimating here would let a `max`-only model drain a
  * shared pool while the ledger still shows headroom.

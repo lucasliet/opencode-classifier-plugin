@@ -5,11 +5,14 @@
  * ledger and the providers from the host catalog; this module only joins them,
  * in this order of precedence:
  *
- * 1. An explicit `providerPools` override from the user's config.
- * 2. The provider ID, after the custom-provider aliases, contains every token of
- *    the vendor ID (`zai-coding-plan` → `zai`, `github-copilot` → `copilot`).
+ * 1. An explicit `providerPools` override from the user's config, for the
+ *    provider or for the provider it is an alias of.
+ * 2. The provider ID, or its configured alias, contains every token of the
+ *    vendor ID (`zai-coding-plan` → `zai`, `github-copilot` → `copilot`).
  *
- * A provider that matches nothing is not a subscription and is never routed.
+ * A provider that matches nothing is not a subscription and is never routed;
+ * a custom provider whose ID does not carry its vendor's name needs an alias
+ * or an override.
  */
 
 import type {
@@ -22,22 +25,14 @@ import type {
 export interface AssociationOptions {
   /** Provider ID → `ai-usagebar` vendor ID. */
   readonly overrides: Readonly<Record<string, SubscriptionID>>
+  /** Provider ID → the provider ID it stands for. */
+  readonly aliases: Readonly<Record<string, string>>
 }
 
 /** Routes for the associated providers, plus why the others were left out. */
 export interface AssociationResult {
   readonly routes: readonly SubscriptionRoute[]
   readonly unmatched: readonly string[]
-}
-
-/**
- * Custom providers whose ID does not carry their vendor's name. `zcode` is a
- * locally registered provider for the Z.AI Coding Plan, the same plan as the
- * built-in `zai-coding-plan`; `grok-build` serves the SuperGrok plan.
- */
-const PROVIDER_ALIASES: Readonly<Record<string, string>> = {
-  zcode: "zai-coding-plan",
-  "grok-build": "supergrok",
 }
 
 /**
@@ -78,7 +73,8 @@ function matchProvider(
   subscriptions: readonly ActiveSubscription[],
   options: AssociationOptions,
 ): ActiveSubscription | string {
-  const override = options.overrides[providerID]
+  const alias = options.aliases[providerID] ?? providerID
+  const override = options.overrides[providerID] ?? options.overrides[alias]
   if (override !== undefined) {
     return (
       subscriptions.find((subscription) => subscription.id === override) ??
@@ -86,7 +82,7 @@ function matchProvider(
     )
   }
   return (
-    matchByName(PROVIDER_ALIASES[providerID] ?? providerID, subscriptions) ??
+    matchByName(alias, subscriptions) ??
     `${providerID}: no active ai-usagebar subscription matches its name`
   )
 }

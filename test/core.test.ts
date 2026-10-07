@@ -1,6 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 import type { Hooks } from "@opencode-ai/plugin"
 import {
@@ -296,6 +298,7 @@ async function routingHarness(options: {
       ...plugin,
       routing: {
         referenceCatalog: "/nonexistent/opencode/models.json",
+        providerAliases: { "my-glm": "zai-coding-plan" },
         ...(plugin.routing as Record<string, unknown> | undefined),
       },
     },
@@ -812,7 +815,7 @@ test("config hook installs selectable jev model router provider", () => {
 test("config hook snapshots every provider except the virtual router", () => {
   const config = hostProviderConfig({
     "opencode-go": ["glm-5.3", "glm-5.3-flash"],
-    zcode: ["glm-5.3"],
+    "my-glm": ["glm-5.3"],
     openai: ["gpt-6.1-sol"],
     opencode: ["gpt-5.6"],
   })
@@ -823,7 +826,7 @@ test("config hook snapshots every provider except the virtual router", () => {
     "glm-5.3",
     "glm-5.3-flash",
   ])
-  assert.deepEqual([...(snapshot.get("zcode") ?? [])], ["glm-5.3"])
+  assert.deepEqual([...(snapshot.get("my-glm") ?? [])], ["glm-5.3"])
   assert.deepEqual([...(snapshot.get("openai") ?? [])], ["gpt-6.1-sol"])
   assert.deepEqual([...(snapshot.get("opencode") ?? [])], ["gpt-5.6"])
   assert.equal(snapshot.has("jev-model-router"), false)
@@ -834,12 +837,12 @@ test("model inventory snapshot tolerates malformed config shapes", () => {
   assert.equal(snapshotModelInventory({ provider: null }).size, 0)
   assert.equal(snapshotModelInventory(undefined).size, 0)
 
-  const weird = hostProviderConfig({ zcode: ["glm-5.3"] })
-  ;(weird as any).provider.zcode = {
+  const weird = hostProviderConfig({ "my-glm": ["glm-5.3"] })
+  ;(weird as any).provider["my-glm"] = {
     models: { "glm-5.3": {}, "  ": {}, "not-an-entry": 42 },
   }
   const snapshot = snapshotModelInventory(weird)
-  assert.deepEqual([...(snapshot.get("zcode") ?? [])], ["glm-5.3"])
+  assert.deepEqual([...(snapshot.get("my-glm") ?? [])], ["glm-5.3"])
 })
 
 test("disabling routing skips the virtual provider install", async () => {
@@ -859,7 +862,7 @@ test("chat.message routes a virtual turn to a subscription model and drops the s
     const { hooks } = await routingHarness({
       providers: {
         "opencode-go": ["glm-5.3", "glm-5.3-flash"],
-        zcode: ["glm-5.3"],
+        "my-glm": ["glm-5.3"],
       },
     })
 
@@ -868,7 +871,7 @@ test("chat.message routes a virtual turn to a subscription model and drops the s
 
     const providerID = output.message.model.providerID
     assert.ok(
-      providerID === "opencode-go" || providerID === "zcode",
+      providerID === "opencode-go" || providerID === "my-glm",
       `expected a subscription provider, got ${String(providerID)}`,
     )
     assert.equal(output.message.model.variant, undefined)
@@ -879,12 +882,12 @@ test("chat.message routes a virtual turn to a subscription model and drops the s
       output.message.model.modelID,
     )
     assert.match(guidance, /Classifier guidance:/)
-    assert.match(guidance, /(opencode-go|zcode)\//)
+    assert.match(guidance, /(opencode-go|my-glm)\//)
   })
 })
 
 test("OAuth-bound subscriptions are excluded on V1 with a trace line", async () => {
-  const logPath = "/tmp/opencode/core.test.v1-trace.log"
+  const logPath = join(tmpdir(), `core.test.v1-trace-${process.pid}.log`)
   rmSync(logPath, { force: true })
   const previousLog = process.env.OPENCODE_CLASSIFIER_LOG
   process.env.OPENCODE_CLASSIFIER_LOG = logPath
@@ -892,13 +895,13 @@ test("OAuth-bound subscriptions are excluded on V1 with a trace line", async () 
   try {
     await withFetch(routeHandler("normal"), async () => {
       const { hooks } = await routingHarness({
-        providers: { openai: ["gpt-6.1-sol"], zcode: ["glm-5.3"] },
+        providers: { openai: ["gpt-6.1-sol"], "my-glm": ["glm-5.3"] },
       })
 
       const output = virtualTurn()
       await hooks["chat.message"]?.({ sessionID: "ses_1" } as never, output)
 
-      assert.equal(output.message.model.providerID, "zcode")
+      assert.equal(output.message.model.providerID, "my-glm")
       assert.equal(output.message.model.modelID, "glm-5.3")
 
       const excluded = readFileSync(logPath, "utf8")
@@ -948,7 +951,7 @@ test("zero verifiable subscription models leave the turn untouched with a manual
 test("sticky continuation keeps routing on the chosen model and disarms on a manual override", async () => {
   await withFetch(routeHandler("normal"), async () => {
     const { hooks } = await routingHarness({
-      providers: { "opencode-go": ["glm-5.3"], zcode: ["glm-5.3"] },
+      providers: { "opencode-go": ["glm-5.3"], "my-glm": ["glm-5.3"] },
       pools: [
         { poolID: "opencode-go", usedPercent: 10 },
         { poolID: "zai", usedPercent: 10 },
@@ -980,7 +983,7 @@ test("sticky continuation keeps routing on the chosen model and disarms on a man
 test("an exhausted quota pool steers the turn to another subscription model", async () => {
   await withFetch(routeHandler("normal"), async () => {
     const { hooks } = await routingHarness({
-      providers: { "opencode-go": ["glm-5.3"], zcode: ["glm-5.3"] },
+      providers: { "opencode-go": ["glm-5.3"], "my-glm": ["glm-5.3"] },
       pools: [
         { poolID: "opencode-go", usedPercent: 100 },
         { poolID: "zai", usedPercent: 4 },
@@ -990,10 +993,10 @@ test("an exhausted quota pool steers the turn to another subscription model", as
     const output = virtualTurn()
     await hooks["chat.message"]?.({ sessionID: "ses_1" } as never, output)
 
-    assert.equal(output.message.model.providerID, "zcode")
+    assert.equal(output.message.model.providerID, "my-glm")
     assert.equal(output.message.model.modelID, "glm-5.3")
 
-    const guidance = await collectDirective(hooks, "zcode", "glm-5.3")
+    const guidance = await collectDirective(hooks, "my-glm", "glm-5.3")
     assert.match(guidance, /opencode-go exhausted/)
   })
 })

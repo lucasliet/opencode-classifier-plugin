@@ -12,7 +12,7 @@ const EMPTY_DECISION: RoutingDecision = { reason: "test", considered: [] }
 function retryEvent(overrides: Partial<RetryEvent> = {}): RetryEvent {
   return {
     sessionID: "ses_1",
-    model: { providerID: "zcode", id: "glm-5.3" },
+    model: { providerID: "my-glm", id: "glm-5.3" },
     error: { type: "provider", message: "overloaded", status: 529 },
     attempt: 1,
     decision: { retry: false },
@@ -52,13 +52,13 @@ test("a provider cools down after a failure and recovers after the cooldown", ()
   const health = createProviderHealth(() => now, 1_000)
 
   // When
-  health.markFailed("zcode")
+  health.markFailed("my-glm")
 
   // Then
-  assert.equal(health.isCoolingDown("zcode"), true)
-  assert.deepEqual(health.coolingDown(), ["zcode"])
+  assert.equal(health.isCoolingDown("my-glm"), true)
+  assert.deepEqual(health.coolingDown(), ["my-glm"])
   now = 1_000
-  assert.equal(health.isCoolingDown("zcode"), false)
+  assert.equal(health.isCoolingDown("my-glm"), false)
   assert.deepEqual(health.coolingDown(), [])
 })
 
@@ -73,7 +73,7 @@ test("a failed routed model cools down its provider, switches and retries at onc
   // Then
   assert.deepEqual(event.decision, { retry: true, delay: 0 })
   assert.deepEqual(deps.switched, ["kimi-code-plan-global/kimi-for-coding"])
-  assert.equal(deps.health.isCoolingDown("zcode"), true)
+  assert.equal(deps.health.isCoolingDown("my-glm"), true)
 })
 
 test("a failure on a model the user picked keeps the host decision", async () => {
@@ -87,7 +87,7 @@ test("a failure on a model the user picked keeps the host decision", async () =>
   // Then
   assert.deepEqual(event.decision, { retry: true, delay: 2_000 })
   assert.deepEqual(deps.switched, [])
-  assert.equal(deps.health.isCoolingDown("zcode"), false)
+  assert.equal(deps.health.isCoolingDown("my-glm"), false)
 })
 
 test("an aborted request is not a provider failure", async () => {
@@ -100,7 +100,7 @@ test("an aborted request is not a provider failure", async () => {
 
   // Then
   assert.deepEqual(event.decision, { retry: false })
-  assert.equal(deps.health.isCoolingDown("zcode"), false)
+  assert.equal(deps.health.isCoolingDown("my-glm"), false)
 })
 
 test("with nowhere else to go the host decision stays and the provider still cools down", async () => {
@@ -115,7 +115,7 @@ test("with nowhere else to go the host decision stays and the provider still coo
 
   // Then
   assert.deepEqual(event.decision, { retry: true, delay: 500 })
-  assert.equal(deps.health.isCoolingDown("zcode"), true)
+  assert.equal(deps.health.isCoolingDown("my-glm"), true)
 })
 
 test("a refused model switch keeps the host decision", async () => {

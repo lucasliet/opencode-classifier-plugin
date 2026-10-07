@@ -12,7 +12,7 @@ const NOW = Date.parse("2026-10-07T00:00:00Z")
 
 function catalogModel(overrides: Partial<CatalogModel> = {}): CatalogModel {
   return {
-    providerID: "zcode",
+    providerID: "my-glm",
     modelID: "glm-5.3",
     name: "GLM 5.3",
     context: 200_000,
@@ -146,13 +146,13 @@ test("measured speed replaces the prior gradually and ignores tiny steps", () =>
   const speed = createSpeedTracker()
 
   // When
-  const tiny = speed.record("zcode/glm-5.3", 10, 1_000)
-  for (let index = 0; index < 5; index += 1) speed.record("zcode/glm-5.3", 2_000, 10_000)
+  const tiny = speed.record("my-glm/glm-5.3", 10, 1_000)
+  for (let index = 0; index < 5; index += 1) speed.record("my-glm/glm-5.3", 2_000, 10_000)
 
   // Then
   assert.equal(tiny, false)
   assert.equal(speed.score("unseen/model", 0.42), 0.42)
-  const measured = speed.score("zcode/glm-5.3", 0.55)
+  const measured = speed.score("my-glm/glm-5.3", 0.55)
   assert.ok(Math.abs(measured - Math.log(20) / Math.log(20)) < 1e-9)
 })
 
@@ -170,16 +170,38 @@ test("speed state round-trips and drops invalid rows", () => {
 
 test("the resolver keeps curated rows and overlays measured speed", () => {
   // Given
-  const speed = createSpeedTracker({ "zcode/glm-5.3": { tokensPerSecond: 200, samples: 10 } })
-  const resolve = profileResolver({ reference: EMPTY_REFERENCE_INDEX, speed, now: () => NOW })
+  const speed = createSpeedTracker({ "zai-coding-plan/glm-5.3": { tokensPerSecond: 200, samples: 10 } })
+  const resolve = profileResolver({ reference: EMPTY_REFERENCE_INDEX, speed, aliases: {}, now: () => NOW })
 
   // When
-  const curated = resolve(catalogModel({ providerID: "zcode", modelID: "glm-5.3" }))
-  const derived = resolve(catalogModel({ providerID: "zcode", modelID: "never-curated" }))
+  const curated = resolve(catalogModel({ providerID: "zai-coding-plan", modelID: "glm-5.3" }))
+  const derived = resolve(catalogModel({ providerID: "zai-coding-plan", modelID: "never-curated" }))
 
   // Then
   assert.equal(curated.speed, 1)
   assert.equal(curated.tier, "advanced")
+  assert.match(derived.source, /^Derived from/)
+})
+
+test("an aliased provider gets the profile of the provider it stands for", () => {
+  // Given
+  const speed = createSpeedTracker({ "my-glm/glm-5.3": { tokensPerSecond: 200, samples: 10 } })
+  const aliased = profileResolver({
+    reference: EMPTY_REFERENCE_INDEX,
+    speed,
+    aliases: { "my-glm": "zai-coding-plan" },
+    now: () => NOW,
+  })
+  const unaliased = profileResolver({ reference: EMPTY_REFERENCE_INDEX, speed, aliases: {}, now: () => NOW })
+
+  // When
+  const curated = aliased(catalogModel({ providerID: "my-glm", modelID: "glm-5.3" }))
+  const derived = unaliased(catalogModel({ providerID: "my-glm", modelID: "glm-5.3" }))
+
+  // Then
+  assert.equal(curated.tier, "advanced")
+  assert.match(curated.source, /Z\.AI Coding Plan/)
+  assert.equal(curated.speed, 1)
   assert.match(derived.source, /^Derived from/)
 })
 
@@ -195,7 +217,7 @@ test("the step observer records throughput from started/ended pairs", () => {
   observe({
     type: "session.step.started",
     created: 1_000,
-    data: { assistantMessageID: "m1", model: { providerID: "zcode", id: "glm-5.3" } },
+    data: { assistantMessageID: "m1", model: { providerID: "my-glm", id: "glm-5.3" } },
   })
   observe({
     type: "session.step.ended",
@@ -206,7 +228,7 @@ test("the step observer records throughput from started/ended pairs", () => {
 
   // Then
   assert.equal(saved, 1)
-  assert.deepEqual(speed.state(), { "zcode/glm-5.3": { tokensPerSecond: 100, samples: 1 } })
+  assert.deepEqual(speed.state(), { "my-glm/glm-5.3": { tokensPerSecond: 100, samples: 1 } })
 })
 
 test("the step observer skips failed steps", () => {
@@ -218,7 +240,7 @@ test("the step observer skips failed steps", () => {
   observe({
     type: "session.step.started",
     created: 1_000,
-    data: { assistantMessageID: "m1", model: { providerID: "zcode", id: "glm-5.3" } },
+    data: { assistantMessageID: "m1", model: { providerID: "my-glm", id: "glm-5.3" } },
   })
   observe({
     type: "session.step.ended",

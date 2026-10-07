@@ -270,7 +270,7 @@ export async function setupV2(
   overrides: V2SetupOverrides = {},
 ): Promise<(() => void) | void> {
   const options = resolveOptions(ctx.options)
-  const trace = createTracer(options.debug)
+  const trace = createTracer(options)
   const jev = new JevClient(options)
   const sessions = new Map<string, SessionRuntimeState>()
   const permissionCache = new Map<string, CachedPermission>()
@@ -315,10 +315,12 @@ export async function setupV2(
   const candidateSources = async (): Promise<CandidateSources> => ({
     subscriptions: ledger.subscriptions(),
     overrides: options.routing.providerPools,
+    aliases: options.routing.providerAliases,
     isExcluded,
     profileOf: profileResolver({
       reference: await loadReference(),
       speed,
+      aliases: options.routing.providerAliases,
       now: Date.now,
     }),
   })

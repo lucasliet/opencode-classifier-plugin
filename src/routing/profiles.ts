@@ -197,10 +197,6 @@ const ZAI_PLAN_SOURCE =
 const DEEPSWE_V11 =
   "DeepSWE v1.1 (datacurve.ai, 2026-09-22, mini-swe-agent, best-effort pass@1)"
 
-/** Provenance for the Z.AI rows whose rate card was inherited from ZCode. */
-const ZAI_INHERITED_RATE_SOURCE =
-  "Rate card mirrored from the ZCode row of the same model: both providers are the same Z.AI Coding Plan. The model IDs on this provider were inferred rather than probed, so confidence is medium."
-
 /** Provenance shared by the unmetered, temporary Go models. */
 const UNMETERED_SOURCE =
   "Temporary unmetered preview: no rate and no monthly cap are published, so burn rates are zero and includedUsageUsd is null. Very low confidence — treat capability as a guess, not a ranking."
@@ -544,7 +540,7 @@ const CURATED_ROWS: Readonly<Record<string, CuratedRow>> = {
     source: `${KIMI_PLAN_SOURCE} Context-limited K3 build, so one step below the full window.`,
     confidence: "medium",
   },
-  "zcode/glm-5.3": {
+  "zai-coding-plan/glm-5.3": {
     tier: "advanced",
     capability: { coding: 0.92, reasoning: 0.95, research: 0.86, toolUse: 0.9, speed: 0.55 },
     costPerMTok: { input: 1.4, output: 4.4, cacheRead: 0.26 },
@@ -554,7 +550,7 @@ const CURATED_ROWS: Readonly<Record<string, CuratedRow>> = {
     source: `${ZAI_PLAN_SOURCE} ${DEEPSWE_V11} score 69% at max effort, a gear this row exposes.`,
     confidence: "high",
   },
-  "zcode/glm-5.3-flash": {
+  "zai-coding-plan/glm-5.3-flash": {
     tier: "balanced",
     capability: { coding: 0.76, reasoning: 0.62, research: 0.58, toolUse: 0.8, speed: 0.59 },
     costPerMTok: { input: 0.15, output: 0.5, cacheRead: 0.03 },
@@ -563,26 +559,6 @@ const CURATED_ROWS: Readonly<Record<string, CuratedRow>> = {
     windowShares: {},
     source: `${ZAI_PLAN_SOURCE} ${DEEPSWE_V11} score 63% at max effort, a gear this row exposes.`,
     confidence: "high",
-  },
-  "zai-coding-plan/glm-5.3": {
-    tier: "advanced",
-    capability: { coding: 0.92, reasoning: 0.95, research: 0.86, toolUse: 0.9, speed: 0.55 },
-    costPerMTok: { input: 1.4, output: 4.4, cacheRead: 0.26 },
-    effortCost: GLM_EFFORT_COST,
-    includedUsageUsd: null,
-    windowShares: {},
-    source: ZAI_INHERITED_RATE_SOURCE,
-    confidence: "medium",
-  },
-  "zai-coding-plan/glm-5.3-flash": {
-    tier: "balanced",
-    capability: { coding: 0.76, reasoning: 0.62, research: 0.58, toolUse: 0.8, speed: 0.59 },
-    costPerMTok: { input: 0.15, output: 0.5, cacheRead: 0.03 },
-    effortCost: GLM_EFFORT_COST,
-    includedUsageUsd: null,
-    windowShares: {},
-    source: ZAI_INHERITED_RATE_SOURCE,
-    confidence: "medium",
   },
   "openai/gpt-6.1-sol": {
     tier: "advanced",

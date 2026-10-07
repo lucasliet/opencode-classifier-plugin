@@ -38,7 +38,7 @@ export interface RoutingOptions {
   safetyMargin?: number
   /**
    * Never route to these. A pattern without `/` matches a provider ID
-   * (`claude-dipol`), one with `/` matches `provider/model`; `*` is a wildcard.
+   * (`corp-proxy`), one with `/` matches `provider/model`; `*` is a wildcard.
    */
   exclude?: string[]
   /**
@@ -46,6 +46,12 @@ export interface RoutingOptions {
    * association cannot place (for example `{ "my-proxy": "anthropic" }`).
    */
   providerPools?: Record<string, string>
+  /**
+   * Provider ID → another provider ID it stands for, for custom providers
+   * (for example `{ "my-glm": "zai-coding-plan" }`). The alias is read as the
+   * target when matching subscriptions and when looking up model profiles.
+   */
+  providerAliases?: Record<string, string>
   /** models.dev cache used to derive profiles; defaults to OpenCode's cache. */
   referenceCatalog?: string
   quota?: {
@@ -132,6 +138,12 @@ export interface PrivacyOptions {
 
 export interface PluginOptions {
   debug?: boolean
+  /**
+   * Trace log file. When unset, `OPENCODE_CLASSIFIER_LOG` is used, then
+   * `$XDG_STATE_HOME/opencode/opencode-classifier-plugin.log` while `debug` is
+   * on; otherwise nothing is written.
+   */
+  logFile?: string
   decision?: DecisionOptions
   routing?: RoutingOptions
   autoMode?: AutoModeOptions
@@ -143,12 +155,14 @@ export interface PluginOptions {
 
 export interface ResolvedOptions {
   debug: boolean
+  logFile: string
   decision: Required<DecisionOptions>
   routing: {
     enabled: boolean
     safetyMargin: number
     exclude: string[]
     providerPools: Record<string, string>
+    providerAliases: Record<string, string>
     referenceCatalog: string
     quota: Required<NonNullable<RoutingOptions["quota"]>>
     thresholds: Required<NonNullable<RoutingOptions["thresholds"]>>

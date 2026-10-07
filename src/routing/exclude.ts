@@ -1,10 +1,10 @@
 /**
  * User blacklist for routing.
  *
- * A pattern without `/` matches a provider ID (`claude-dipol`), and a pattern
- * with `/` matches a `provider/model` reference (`zcode/glm-5.3-flash`). `*`
- * matches any run of characters and matching ignores case, so `*-dipol` or
- * `zcode/*-flash` work as expected.
+ * A pattern without `/` matches a provider ID (`corp-proxy`), and a pattern
+ * with `/` matches a `provider/model` reference (`zai-coding-plan/glm-5.3-flash`).
+ * `*` matches any run of characters and matching ignores case, so `*-proxy` or
+ * `zai-coding-plan/*-flash` work as expected.
  */
 
 /** A compiled blacklist, safe to call per model. */

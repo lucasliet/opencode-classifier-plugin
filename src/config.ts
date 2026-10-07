@@ -92,6 +92,7 @@ export function resolveOptions(raw: unknown): ResolvedOptions {
 
   const resolved: ResolvedOptions = {
     debug: bool(source.debug, false),
+    logFile: expandHome(str(source.logFile, "")),
     decision: {
       endpoint: str(decision.endpoint, DEFAULT_ENDPOINT),
       model: str(decision.model, DEFAULT_JEV_MODEL),
@@ -106,6 +107,7 @@ export function resolveOptions(raw: unknown): ResolvedOptions {
       safetyMargin: num(routing.safetyMargin, 0.1, 0, 0.9),
       exclude: stringList(routing.exclude),
       providerPools: stringMap(routing.providerPools),
+      providerAliases: stringMap(routing.providerAliases),
       referenceCatalog: expandHome(str(routing.referenceCatalog, defaultReferencePath())),
       quota: {
         enabled: bool(routingQuota.enabled, true),

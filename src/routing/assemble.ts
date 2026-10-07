@@ -21,6 +21,8 @@ export interface CandidateSources {
   readonly subscriptions: readonly ActiveSubscription[]
   /** Provider ID → vendor ID overrides from the config. */
   readonly overrides: Readonly<Record<string, string>>
+  /** Provider ID → the provider ID it stands for, from the config. */
+  readonly aliases: Readonly<Record<string, string>>
   readonly isExcluded: ExclusionMatcher
   readonly profileOf: (model: CatalogModel) => ModelProfile
 }
@@ -39,7 +41,7 @@ export function planRoutes(
   return associateProviders(
     providerIDsOf(catalog, sources.isExcluded),
     sources.subscriptions,
-    { overrides: sources.overrides },
+    { overrides: sources.overrides, aliases: sources.aliases },
   )
 }
 

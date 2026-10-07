@@ -108,7 +108,7 @@ export async function OpenCodeClassifierPlugin(
 
   // Trace goes to a file because stderr is interleaved into the TUI and
   // cannot be read comfortably mid-session. See src/trace.ts.
-  const trace = createTracer(options.debug)
+  const trace = createTracer(options)
 
   const ledgerFactory = internals?.createLedger ?? createUsageBarLedger
   let routerRuntime: RouterRuntime | undefined
@@ -157,8 +157,14 @@ export async function OpenCodeClassifierPlugin(
       candidateSources: async () => ({
         subscriptions: ledger.subscriptions(),
         overrides: options.routing.providerPools,
+        aliases: options.routing.providerAliases,
         isExcluded,
-        profileOf: profileResolver({ reference: await loadReference(), speed, now: Date.now }),
+        profileOf: profileResolver({
+          reference: await loadReference(),
+          speed,
+          aliases: options.routing.providerAliases,
+          now: Date.now,
+        }),
       }),
       refreshTimer: undefined,
     }

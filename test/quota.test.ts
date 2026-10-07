@@ -1,6 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { existsSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 import { createUsageBarLedger } from "../src/quota/ledger.ts"
 import type { QuotaLedgerOptions } from "../src/quota/ledger.ts"
@@ -570,7 +572,7 @@ test("dispose stops the ledger from running the binary again", async () => {
 
 test("the binary is executed without a shell", async () => {
   // Given
-  const canary = "/tmp/opencode/usagebar-injection-canary"
+  const canary = join(tmpdir(), "usagebar-injection-canary")
   rmSync(canary, { force: true })
   const controller = new AbortController()
 

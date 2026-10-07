@@ -20,7 +20,7 @@ test("a provider whose name contains the vendor id joins that subscription", () 
   const providers = ["zai-coding-plan", "kimi-code-plan-global", "github-copilot"]
 
   // When
-  const result = associateProviders(providers, [ZAI, KIMI, COPILOT], { overrides: {} })
+  const result = associateProviders(providers, [ZAI, KIMI, COPILOT], { overrides: {}, aliases: {} })
 
   // Then
   assert.deepEqual(routeMap(result), {
@@ -31,23 +31,45 @@ test("a provider whose name contains the vendor id joins that subscription", () 
   assert.equal(result.routes.find((route) => route.id === "copilot")?.connection.requireOAuth, true)
 })
 
-test("custom providers resolve through their built-in alias", () => {
+test("a custom provider without its vendor's name needs an override", () => {
   // Given
   const superGrok: ActiveSubscription = { id: "supergrok", label: "SuperGrok", requireOAuth: false }
-  const grokBot: ActiveSubscription = { id: "grokbot", label: "Grok Bot", requireOAuth: false }
+  const providers = ["my-glm", "zai-coding-plan", "my-grok"]
 
   // When
-  const result = associateProviders(["zcode", "zai-coding-plan", "grok-build"], [ZAI, grokBot, superGrok], {
-    overrides: {},
+  const unmapped = associateProviders(providers, [ZAI, superGrok], { overrides: {}, aliases: {} })
+  const mapped = associateProviders(providers, [ZAI, superGrok], {
+    overrides: { "my-glm": "zai", "my-grok": "supergrok" },
+    aliases: {},
   })
 
   // Then
-  assert.deepEqual(routeMap(result), { zai: ["zcode", "zai-coding-plan"], supergrok: ["grok-build"] })
+  assert.deepEqual(routeMap(unmapped), { zai: ["zai-coding-plan"] })
+  assert.deepEqual(routeMap(mapped), { zai: ["my-glm", "zai-coding-plan"], supergrok: ["my-grok"] })
+})
+
+test("a provider alias is matched as the provider it stands for", () => {
+  // Given
+  const superGrok: ActiveSubscription = { id: "supergrok", label: "SuperGrok", requireOAuth: false }
+
+  // When
+  const byName = associateProviders(["my-glm", "my-grok"], [ZAI, superGrok], {
+    overrides: {},
+    aliases: { "my-glm": "zai-coding-plan", "my-grok": "supergrok" },
+  })
+  const byAliasOverride = associateProviders(["my-proxy"], [ANTHROPIC], {
+    overrides: { "corp-gateway": "anthropic" },
+    aliases: { "my-proxy": "corp-gateway" },
+  })
+
+  // Then
+  assert.deepEqual(routeMap(byName), { zai: ["my-glm"], supergrok: ["my-grok"] })
+  assert.deepEqual(routeMap(byAliasOverride), { anthropic: ["my-proxy"] })
 })
 
 test("the longest matching vendor id wins and a metered sibling never matches", () => {
   // When
-  const result = associateProviders(["opencode-go", "opencode"], [OPENCODE_GO], { overrides: {} })
+  const result = associateProviders(["opencode-go", "opencode"], [OPENCODE_GO], { overrides: {}, aliases: {} })
 
   // Then
   assert.deepEqual(routeMap(result), { "opencode-go": ["opencode-go"] })
@@ -56,7 +78,7 @@ test("the longest matching vendor id wins and a metered sibling never matches", 
 
 test("a provider whose name matches no vendor is never routed", () => {
   // When
-  const result = associateProviders(["claude-dipol", "zhipuai"], [ZAI, ANTHROPIC], { overrides: {} })
+  const result = associateProviders(["corp-proxy", "zhipuai"], [ZAI, ANTHROPIC], { overrides: {}, aliases: {} })
 
   // Then
   assert.deepEqual(result.routes, [])
@@ -67,6 +89,7 @@ test("an override wins, and an override to an inactive vendor explains itself", 
   // When
   const result = associateProviders(["my-proxy", "old-plan"], [ANTHROPIC], {
     overrides: { "my-proxy": "anthropic", "old-plan": "opencode-go" },
+    aliases: {},
   })
 
   // Then
@@ -78,7 +101,7 @@ test("an override wins, and an override to an inactive vendor explains itself", 
 
 test("a cancelled subscription leaves its providers unmatched", () => {
   // When
-  const result = associateProviders(["opencode-go"], [ZAI], { overrides: {} })
+  const result = associateProviders(["opencode-go"], [ZAI], { overrides: {}, aliases: {} })
 
   // Then
   assert.deepEqual(result.routes, [])
@@ -87,14 +110,14 @@ test("a cancelled subscription leaves its providers unmatched", () => {
 
 test("exclusions match whole providers, provider/model refs and wildcards, ignoring case", () => {
   // Given
-  const isExcluded = compileExclusions(["claude-dipol", "zcode/*-FLASH", "*-enterprise"])
+  const isExcluded = compileExclusions(["corp-proxy", "my-glm/*-FLASH", "*-enterprise"])
 
   // When / Then
-  assert.equal(isExcluded("claude-dipol", "claude-opus-5-5"), true)
-  assert.equal(isExcluded("zcode", "glm-5.3-flash"), true)
-  assert.equal(isExcluded("zcode", "glm-5.3"), false)
+  assert.equal(isExcluded("corp-proxy", "claude-opus-5-5"), true)
+  assert.equal(isExcluded("my-glm", "glm-5.3-flash"), true)
+  assert.equal(isExcluded("my-glm", "glm-5.3"), false)
   assert.equal(isExcluded("github-copilot-enterprise", "gpt-5.4"), true)
-  assert.equal(isExcluded("claude-dipol-2", "x"), false)
+  assert.equal(isExcluded("corp-proxy-2", "x"), false)
   assert.equal(compileExclusions([])("anything", "x"), false)
 })
 
