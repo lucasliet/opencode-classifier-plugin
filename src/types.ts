@@ -106,6 +106,22 @@ export interface ContextOptions {
   relevantAt?: number
 }
 
+/**
+ * Skill and Code Mode namespace selection: Jev decides which skills and MCP
+ * or plugin tool namespaces the task needs, and only those are described to
+ * the model. The rest stay reachable by skill ID or Code Mode `search`.
+ */
+export interface CapabilityOptions {
+  enabled?: boolean
+  /** Minimum Jev relevance for a skill or namespace to be described in full. */
+  relevantAt?: number
+  /** Skills and Code Mode namespaces that are always described in full. */
+  alwaysInclude?: {
+    skills?: string[]
+    namespaces?: string[]
+  }
+}
+
 export interface PrivacyOptions {
   maxStateChars?: number
   maxPromptChars?: number
@@ -121,6 +137,7 @@ export interface PluginOptions {
   autoMode?: AutoModeOptions
   agents?: DomainRoutingOptions
   context?: ContextOptions
+  capabilities?: CapabilityOptions
   privacy?: PrivacyOptions
 }
 
@@ -153,6 +170,14 @@ export interface ResolvedOptions {
     byDomain: Record<string, string>
   }
   context: Required<ContextOptions>
+  capabilities: {
+    enabled: boolean
+    relevantAt: number
+    alwaysInclude: {
+      skills: string[]
+      namespaces: string[]
+    }
+  }
   privacy: Required<PrivacyOptions>
 }
 

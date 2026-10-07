@@ -12,6 +12,8 @@ const DEFAULT_JEV_MODEL = "jev-1.13-free"
 const DEFAULT_QUOTA_BINARY = "ai-usagebar"
 const DEFAULT_QUOTA_ARGS = ["usage", "--json"]
 const DEFAULT_VENDOR_ARGS = ["vendors", "--json"]
+/** The `opencode` namespace holds harness tools, not MCP servers. */
+const DEFAULT_ALWAYS_INCLUDED_NAMESPACES = ["opencode"]
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -81,6 +83,8 @@ export function resolveOptions(raw: unknown): ResolvedOptions {
   const autoModeThresholds = record(autoMode.thresholds)
   const agents = record(source.agents)
   const context = record(source.context)
+  const capabilities = record(source.capabilities)
+  const capabilitiesAlwaysInclude = record(capabilities.alwaysInclude)
   const privacy = record(source.privacy)
 
   const onErrorValue = str(autoMode.onError, "ask")
@@ -148,6 +152,16 @@ export function resolveOptions(raw: unknown): ResolvedOptions {
       maxCandidates: integer(context.maxCandidates, 24, 2, 64),
       maxBatches: integer(context.maxBatches, 4, 1, 32),
       relevantAt: num(context.relevantAt, 0.52, 0, 1),
+    },
+    capabilities: {
+      enabled: bool(capabilities.enabled, true),
+      relevantAt: num(capabilities.relevantAt, 0.4, 0, 1),
+      alwaysInclude: {
+        skills: stringList(capabilitiesAlwaysInclude.skills),
+        namespaces: Array.isArray(capabilitiesAlwaysInclude.namespaces)
+          ? stringList(capabilitiesAlwaysInclude.namespaces)
+          : [...DEFAULT_ALWAYS_INCLUDED_NAMESPACES],
+      },
     },
     privacy: {
       maxStateChars: integer(privacy.maxStateChars, 24_000, 2_000, 200_000),

@@ -75,6 +75,14 @@
           "maxBatches": 4,
           "relevantAt": 0.52
         },
+        "capabilities": {
+          "enabled": true,
+          "relevantAt": 0.4,
+          "alwaysInclude": {
+            "skills": [],
+            "namespaces": ["opencode"]
+          }
+        },
         "privacy": {
           "maxStateChars": 24000,
           "maxPromptChars": 8000,

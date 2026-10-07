@@ -781,6 +781,61 @@ test("v2 context hook detects a manual override and stops routing", async () => 
   )
 })
 
+test("v2 context hook describes only the skills Jev selected for the task", async () => {
+  // Given
+  const mock = mockContext(pluginOptions(), { providerID: "p", id: "normal" })
+  const codeMode = [
+    "# Code Mode",
+    "",
+    "## Available tools",
+    "",
+    "- opencode (1 tool)",
+    "  - tools.opencode.session_rename({ title: string }): Promise<string>",
+    "",
+    "<available_skills>",
+    "  <skill>",
+    "    <id>pdf</id>",
+    "    <description>Read and edit PDF files.</description>",
+    "  </skill>",
+    "  <skill>",
+    "    <id>docx</id>",
+    "    <description>Create Word documents.</description>",
+    "  </skill>",
+    "</available_skills>",
+  ].join("\n")
+  const event = {
+    ...contextEvent({ providerID: "p", id: "normal" }),
+    system: [{ type: "text", text: codeMode }],
+  }
+
+  // When
+  await withFetch(
+    (async (_url: unknown, init?: { body?: unknown }) => {
+      const body = JSON.parse(String(init?.body)) as { state: { candidates?: Array<{ name: string }> } }
+      const candidates = body.state.candidates
+      if (candidates === undefined) {
+        return new Response(JSON.stringify(routeResponse("fast")), { status: 200 })
+      }
+      const answers = Object.fromEntries(
+        candidates.map((item, index) => [`item_${index}`, { type: "noul", noul: item.name === "pdf" ? 0.9 : 0.05 }]),
+      )
+      return new Response(JSON.stringify({ answers }), { status: 200 })
+    }) as typeof fetch,
+    async () => {
+      await setupRouted(mock)
+      await mock.hooks.prompt[0]?.(promptEvent("fill the PDF form"))
+      await mock.hooks.context[0]?.(event)
+    },
+  )
+
+  // Then
+  const narrowed = event.system[0]?.text ?? ""
+  assert.match(narrowed, /<id>pdf<\/id>/)
+  assert.doesNotMatch(narrowed, /<id>docx<\/id>/)
+  assert.match(narrowed, /Other skills are available but not described here: docx\./)
+  assert.match(narrowed, /tools\.opencode\.session_rename/)
+})
+
 test("v2 prompt hook routes a session-level Auto selection before first dispatch", async () => {
   const mock = mockContext(
     pluginOptions(),

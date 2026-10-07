@@ -16,6 +16,8 @@ import {
 import type { TaskRequirementsInput } from "./classifier.ts"
 import { decidePermission } from "./permission.ts"
 import { filterLargeToolContext } from "./context.ts"
+import { judgeCapabilities } from "./capabilities/judge.ts"
+import { createCapabilitySelector } from "./capabilities/selection.ts"
 import {
   createSessionState,
   eventSessionID,
@@ -34,6 +36,7 @@ import { createSpeedTracker } from "./routing/speed.ts"
 import type { SpeedTracker } from "./routing/speed.ts"
 import { createUsageBarLedger } from "./quota/ledger.ts"
 import type { QuotaLedgerOptions } from "./quota/ledger.ts"
+import { narrowRequestCapabilities, pinnedCapabilityKeys } from "./v2-capabilities.ts"
 import { createFailoverHook } from "./v2-failover.ts"
 import { routeTask } from "./v2-route.ts"
 import type { RouteOutcome } from "./v2-route.ts"
@@ -253,7 +256,9 @@ function unrefTimer(timer: unknown): void {
  *   winner through native `session.switchModel`;
  * - agent routing via native `session.switchAgent`;
  * - context filtering via `session.hook("context")` (outgoing call only,
- *   persisted history untouched).
+ *   persisted history untouched);
+ * - skill and Code Mode namespace selection in the same hook: only what Jev
+ *   selects for the task is described to the model.
  *
  * @param ctx - The V2 plugin context.
  * @param overrides - Test-only injection points; production callers omit them.
@@ -270,6 +275,10 @@ export async function setupV2(
   const sessions = new Map<string, SessionRuntimeState>()
   const permissionCache = new Map<string, CachedPermission>()
   const contextFilterCache = new Map<string, string | undefined>()
+  const capabilitySelector = createCapabilitySelector(
+    (task, candidates) => judgeCapabilities(jev, options, task, candidates),
+    pinnedCapabilityKeys(options.capabilities.alwaysInclude),
+  )
 
   const createLedger = overrides.createLedger ?? createUsageBarLedger
   const ledger = createLedger({
@@ -567,7 +576,15 @@ export async function setupV2(
       delete mirror.turnModel
     }
 
-    if (!options.context.enabled || !state?.task) return
+    if (!state?.task) return
+    if (options.capabilities.enabled) {
+      try {
+        await narrowRequestCapabilities(capabilitySelector, event, state.task, trace)
+      } catch (error) {
+        trace("v2 capability narrowing failed", { sessionID, error: errorMessage(error) })
+      }
+    }
+    if (!options.context.enabled) return
     try {
       await filterLargeToolContext(
         jev,
@@ -598,6 +615,7 @@ export async function setupV2(
         if (!sessionID) continue
         sessions.delete(sessionID)
         lastRequirements.delete(sessionID)
+        capabilitySelector.forget(sessionID)
         clearSessionMap(contextFilterCache, sessionID)
       }
     } catch {

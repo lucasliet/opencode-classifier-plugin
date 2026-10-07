@@ -9,7 +9,9 @@ The plugin provides:
 - zero-config subscription model routing driven by live quota;
 - Jev-based permission Auto Mode;
 - agent routing;
-- large tool-output context filtering.
+- large tool-output context filtering;
+- skill and MCP selection: only what Jev picks for the task is described to
+  the model (V2).
 
 ## Supported OpenCode API
 
@@ -520,6 +522,53 @@ Filtering failure preserves the original request context.
 
 A bounded in-memory cache avoids sending the same task/output combination to Jev repeatedly during the same OpenCode process.
 
+## Skill and MCP selection
+
+OpenCode V2 describes every skill (`<available_skills>`) and every MCP or
+plugin tool namespace (the Code Mode catalog behind `execute`) in the system
+prompt of every model request. With dozens of skills that is most of the
+instruction tokens. Harness tools (`read`, `edit`, `shell`, `skill`,
+`execute`, ...) are not touched.
+
+In `session.hook("context")` the plugin:
+
+1. reads the skills and namespaces from the Code Mode system part;
+2. asks Jev, once per user prompt, which of them the task needs (one
+   relevance question each, in parallel batches bounded by
+   `privacy.maxStateChars`);
+3. rewrites that part for the outgoing request only.
+
+What Jev does not select stays reachable:
+
+- a hidden namespace is left out entirely, and the catalog switches to the
+  host's own "partial" wording, so the model can still find its tools with
+  `search(...)` inside `execute`;
+- hidden skills collapse into one line of IDs, which the skill tool still
+  loads.
+
+Selections accumulate for the session: a skill picked once stays described,
+so the system prompt only changes when something new is needed and the
+provider's prompt cache stays warm. A Jev failure keeps the full catalog for
+that prompt. The rewrite never touches persisted history.
+
+```json
+{
+  "capabilities": {
+    "enabled": true,
+    "relevantAt": 0.4,
+    "alwaysInclude": {
+      "skills": [],
+      "namespaces": ["opencode"]
+    }
+  }
+}
+```
+
+`alwaysInclude` entries are never sent to Jev and are always described. The
+`opencode` namespace holds harness tools (sessions, models, MCP resources),
+so it is pinned by default. Mid-session catalog changes the host sends as
+messages (`The available skills have changed...`) are not narrowed.
+
 ## Failure triage, loop controller, and post-action verification
 
 These features were removed. The plugin no longer observes tool results, classifies failures, maintains a per-task loop state machine, blocks tool execution, or gates mutations behind verification. It provides routing, permission Auto Mode, and context filtering only.
@@ -549,7 +598,9 @@ Potentially transmitted data:
 - permission metadata only when explicitly enabled;
 - bounded failure evidence;
 - bounded validation evidence;
-- bounded chunks of large tool output selected for relevance classification.
+- bounded chunks of large tool output selected for relevance classification;
+- skill descriptions and Code Mode namespace listings, for skill and MCP
+  selection.
 
 For zero external classifier traffic, point `decision.endpoint` at a local System One-compatible service.
 
@@ -632,6 +683,7 @@ opencode-classifier-plugin/
 │   ├── v2-route.ts
 │   ├── v2-failover.ts
 │   ├── v2-speed.ts
+│   ├── v2-capabilities.ts
 │   ├── types.ts
 │   ├── config.ts
 │   ├── jev.ts
@@ -640,6 +692,10 @@ opencode-classifier-plugin/
 │   ├── context.ts
 │   ├── runtime.ts
 │   ├── trace.ts
+│   ├── capabilities/
+│   │   ├── catalog.ts
+│   │   ├── judge.ts
+│   │   └── selection.ts
 │   ├── routing/
 │   │   ├── contracts.ts
 │   │   ├── subscriptions.ts
@@ -659,6 +715,7 @@ opencode-classifier-plugin/
 │       ├── usagebar.ts
 │       └── ledger.ts
 ├── test/
+│   ├── capabilities.test.ts
 │   ├── core.test.ts
 │   ├── failover.test.ts
 │   ├── profiles.test.ts
