@@ -1,7 +1,7 @@
 {
   "name": "opencode-classifier-plugin",
   "version": "0.1.0",
-  "description": "Jev-powered Auto Mode, selectable model router, agent routing, and context filtering for OpenCode 1.18.x.",
+  "description": "Jev-powered Auto Mode, zero-config subscription model routing with live quota awareness, permission decisions, agent routing, and context filtering for OpenCode.",
   "type": "module",
   "license": "MIT",
   "exports": {
@@ -24,6 +24,8 @@
     "system-one",
     "classifier",
     "model-router",
+    "quota",
+    "subscriptions",
     "autopilot",
     "agent"
   ],

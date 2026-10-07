@@ -12,26 +12,8 @@
           "timeoutMs": 8000,
           "retries": 1
         },
-        "router": {
-          "enabled": true,
-          "sticky": true,
-          "models": {
-            "fast": "opencode-go/glm-5.3-flash",
-            "normal": "opencode-go/gpt-5.6-luna",
-            "deep": "opencode/gpt-5.6-sol"
-          },
-          "efforts": {
-            "fast": "low",
-            "normal": "medium",
-            "deep": "high"
-          },
-          "fallbackTier": "normal",
-          "thresholds": {
-            "fastChoice": 0.72,
-            "deepChoice": 0.58,
-            "deepReasoning": 0.72,
-            "highRisk": 0.72
-          }
+        "routing": {
+          "enabled": true
         },
         "autoMode": {
           "enabled": true,
