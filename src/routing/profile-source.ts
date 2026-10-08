@@ -1,8 +1,8 @@
 /**
  * Profile resolution: curated rows win, every other model gets a derived
- * profile, and measured speed replaces the static speed estimate of both. A
- * provider with a configured alias is profiled as the provider it stands for;
- * measured speed stays keyed by the real provider.
+ * profile, and measured speed replaces the static speed estimate of both.
+ * Curation is keyed by model alone, so every provider serving a model gets the
+ * same row; measured speed stays keyed by the real provider.
  */
 
 import type { CatalogModel, ModelProfile } from "./contracts.ts"
@@ -15,8 +15,6 @@ import type { SpeedTracker } from "./speed.ts"
 export interface ProfileSources {
   readonly reference: ReferenceIndex
   readonly speed: SpeedTracker
-  /** Provider ID → the provider ID it stands for. */
-  readonly aliases: Readonly<Record<string, string>>
   /** Clock source for the staleness rule of derived profiles. */
   readonly now: () => number
 }
@@ -30,10 +28,7 @@ export interface ProfileSources {
 export function profileResolver(sources: ProfileSources): (model: CatalogModel) => ModelProfile {
   return (model) => {
     const ref = `${model.providerID}/${model.modelID}`
-    const providerID = sources.aliases[model.providerID] ?? model.providerID
-    const profiled = { ...model, providerID }
-    const base =
-      profileFor(`${providerID}/${model.modelID}`) ?? deriveProfile(profiled, sources.reference, sources.now())
+    const base = profileFor(model.modelID) ?? deriveProfile(model, sources.reference, sources.now())
     return { ...base, speed: sources.speed.score(ref, base.speed) }
   }
 }

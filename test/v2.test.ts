@@ -207,8 +207,8 @@ function defaultCatalog(): unknown[] {
   return [
     hostModel({
       providerID: "openai",
-      modelID: "gpt-6-luna",
-      name: "GPT-6 Luna",
+      modelID: "gpt-5.3-codex-spark",
+      name: "GPT-5.3 Codex Spark",
       variants: [{ id: "medium", settings: {} }, { id: "high", settings: {} }],
     }),
     hostModel({

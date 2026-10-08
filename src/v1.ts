@@ -162,7 +162,6 @@ export async function OpenCodeClassifierPlugin(
         profileOf: profileResolver({
           reference: await loadReference(),
           speed,
-          aliases: options.routing.models.providerAliases,
           now: Date.now,
         }),
       }),

@@ -320,7 +320,6 @@ export async function setupV2(
     profileOf: profileResolver({
       reference: await loadReference(),
       speed,
-      aliases: options.routing.models.providerAliases,
       now: Date.now,
     }),
   })

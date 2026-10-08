@@ -171,7 +171,7 @@ test("speed state round-trips and drops invalid rows", () => {
 test("the resolver keeps curated rows and overlays measured speed", () => {
   // Given
   const speed = createSpeedTracker({ "zai-coding-plan/glm-5.3": { tokensPerSecond: 200, samples: 10 } })
-  const resolve = profileResolver({ reference: EMPTY_REFERENCE_INDEX, speed, aliases: {}, now: () => NOW })
+  const resolve = profileResolver({ reference: EMPTY_REFERENCE_INDEX, speed, now: () => NOW })
 
   // When
   const curated = resolve(catalogModel({ providerID: "zai-coding-plan", modelID: "glm-5.3" }))
@@ -183,26 +183,20 @@ test("the resolver keeps curated rows and overlays measured speed", () => {
   assert.match(derived.source, /^Derived from/)
 })
 
-test("an aliased provider gets the profile of the provider it stands for", () => {
+test("any provider serving a curated model gets its curated row", () => {
   // Given
   const speed = createSpeedTracker({ "my-glm/glm-5.3": { tokensPerSecond: 200, samples: 10 } })
-  const aliased = profileResolver({
-    reference: EMPTY_REFERENCE_INDEX,
-    speed,
-    aliases: { "my-glm": "zai-coding-plan" },
-    now: () => NOW,
-  })
-  const unaliased = profileResolver({ reference: EMPTY_REFERENCE_INDEX, speed, aliases: {}, now: () => NOW })
+  const resolve = profileResolver({ reference: EMPTY_REFERENCE_INDEX, speed, now: () => NOW })
 
   // When
-  const curated = aliased(catalogModel({ providerID: "my-glm", modelID: "glm-5.3" }))
-  const derived = unaliased(catalogModel({ providerID: "my-glm", modelID: "glm-5.3" }))
+  const custom = resolve(catalogModel({ providerID: "my-glm", modelID: "glm-5.3" }))
+  const plan = resolve(catalogModel({ providerID: "zai-coding-plan", modelID: "glm-5.3" }))
 
   // Then
-  assert.equal(curated.tier, "advanced")
-  assert.match(curated.source, /Z\.AI Coding Plan/)
-  assert.equal(curated.speed, 1)
-  assert.match(derived.source, /^Derived from/)
+  assert.equal(custom.tier, "advanced")
+  assert.equal(custom.source, plan.source)
+  assert.equal(custom.speed, 1)
+  assert.notEqual(plan.speed, 1)
 })
 
 test("the step observer records throughput from started/ended pairs", () => {

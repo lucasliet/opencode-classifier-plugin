@@ -13,6 +13,7 @@ import type {
   SubscriptionRoute,
 } from "./contracts.ts"
 import type { ExclusionMatcher } from "./exclude.ts"
+import { dropSuperseded } from "./supersede.ts"
 import { associateProviders } from "./subscriptions.ts"
 import type { AssociationResult } from "./subscriptions.ts"
 
@@ -51,16 +52,17 @@ export function planRoutes(
  * @param catalog Host models.
  * @param routes Routes that passed the adapter's connection proof.
  * @param sources Blacklist and profile source.
- * @returns Routable candidates.
+ * @returns Routable candidates, without models a newer available release supersedes.
  */
 export function candidatesFor(
   catalog: readonly CatalogModel[],
   routes: readonly SubscriptionRoute[],
   sources: CandidateSources,
 ): RoutableModel[] {
-  return buildRoutableModels(catalog, {
+  const routable = buildRoutableModels(catalog, {
     routes,
     profileOf: sources.profileOf,
     isExcluded: sources.isExcluded,
   })
+  return dropSuperseded(routable)
 }

@@ -178,8 +178,12 @@ Several providers matched to one vendor share that vendor's quota pool.
 Each candidate needs a quality tier, capability estimates, a burn rate and a
 speed. They come from, in order of precedence:
 
-1. **Curated rows** in `src/routing/profiles.ts`, kept as optional fine-tuning
-   (benchmark-calibrated tiers, Go dollar allowances).
+1. **Curated rows** in `src/routing/curated-models.ts`, keyed by model rather
+   than by provider: every provider serving `glm-5.3` (including
+   `zai-org/glm-5.3-maas` or `glm-5.3@default` spellings) gets the same row.
+   Tiers are calibrated on DeepSWE v1.1 first, then the Artificial Analysis
+   Intelligence Index, SWE-bench Pro and Terminal-Bench; each row cites its
+   evidence and the vendor's list price as its burn rate.
 2. **Derived profiles** for every other model, built from the host catalog and
    the models.dev cache OpenCode keeps at `~/.cache/opencode/models.json`
    (`routing.models.referenceCatalog` overrides the path). The model's list price —
@@ -193,12 +197,13 @@ speed. They come from, in order of precedence:
    moving tokens-per-second average per model, and persists it in the plugin's
    storage. Until five turns are measured the name-based prior is blended in.
 
-A provider listed in `routing.models.providerAliases` is profiled as the provider it
-stands for, so `{ "my-glm": "zai-coding-plan" }` gives `my-glm/glm-5.3` the
-`zai-coding-plan/glm-5.3` row; measured speed stays keyed by the real provider.
+Older releases of a model line are not curated and are never routed while a
+newer release is available from any provider (`src/routing/supersede.ts`):
+`glm-5.2` drops out when `glm-5.3` is in the catalog, and comes back on its own
+if the newer model disappears.
 
-Vendors that publish no dollar allowance are compared through percentage
-pressure only.
+Plan terms (allowances, quota windows) are not curated: every plan is compared
+through the percentage pressure its live quota reports.
 
 ## Failover
 
@@ -248,7 +253,7 @@ empty `routing` block is a valid, working configuration:
       "safetyMargin": 0.10,         // 0..0.9, share of a quota window the router refuses to spend
       "exclude": ["corp-proxy"],    // providers or provider/model patterns never routed
       "providerPools": {},          // provider ID -> ai-usagebar vendor ID, when matching needs help
-      "providerAliases": {},        // provider ID -> provider ID it stands for (matching and profiles)
+      "providerAliases": {},        // provider ID -> provider ID it stands for (subscription matching)
       "referenceCatalog": "~/.cache/opencode/models.json", // models.dev cache for derived profiles
       "quota": {
         "enabled": true,            // default true
@@ -771,7 +776,10 @@ opencode-classifier-plugin/
 │   │   ├── catalog.ts
 │   │   ├── reference.ts
 │   │   ├── derive.ts
+│   │   ├── model-id.ts
+│   │   ├── curated-models.ts
 │   │   ├── profiles.ts
+│   │   ├── supersede.ts
 │   │   ├── profile-source.ts
 │   │   ├── speed.ts
 │   │   ├── health.ts
